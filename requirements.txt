@@ -1,0 +1,11 @@
+altgraph==0.17.4
+customtkinter==5.2.2
+darkdetect==0.8.0
+packaging==24.2
+pyinstaller==6.12.0
+pyinstaller-hooks-contrib==2025.1
+PyQt5==5.15.11
+PyQt5-Qt5==5.15.16
+PyQt5_sip==12.17.0
+tk==0.1.0
+yt-dlp==2025.1.26
