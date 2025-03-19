@@ -9,6 +9,12 @@ A simple desktop application for downloading YouTube videos and audio.
 - Simple and intuitive user interface
 - Cross-platform compatibility
 
+## Download
+
+Download the latest release for your platform:
+- [Linux](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/download/v1.0.0/youtube-downloader)
+- [All Releases](https://github.com/Subhajit-Paul/youtube-downloader/releases)
+
 ## Prerequisites
 
 This application requires FFmpeg to be installed on your system.
