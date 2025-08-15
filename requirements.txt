@@ -9,3 +9,5 @@ PyQt5-Qt5==5.15.16
 PyQt5_sip==12.17.0
 tk==0.1.0
 yt-dlp==2025.1.26
+
+qt-material

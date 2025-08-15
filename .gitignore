@@ -1,4 +1,5 @@
-youtube-downloader.spec
+*.spec
 YTD-env
 dist
 build
+.venv
