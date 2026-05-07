@@ -9,16 +9,20 @@ from PyQt5.QtWidgets import (
     QFileDialog, QTextEdit, QFrame, QMessageBox, QSizePolicy
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtGui import QFont, QIcon, QTextCursor
 from qt_material import apply_stylesheet
 
 from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
 from update_ui import start_update_check
 
+_LOG_LIMIT = 200
+
 
 class DownloadWorker(QObject):
     progress = pyqtSignal(dict)
+    overall = pyqtSignal(int, int)     # completed, total
+    postprocess = pyqtSignal(str)      # status message, empty string = done
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -29,6 +33,9 @@ class DownloadWorker(QObject):
         self.save_path = save_path
         self.quality = quality
         self._cancel = threading.Event()
+        self._completed = 0
+        self._total = 0
+        self._lock = threading.Lock()
 
     def cancel(self):
         self._cancel.set()
@@ -36,27 +43,49 @@ class DownloadWorker(QObject):
     def progress_hook(self, d):
         if self._cancel.is_set():
             raise yt_dlp.utils.DownloadCancelled()
-        if d['status'] == 'downloading':
-            try:
-                total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-                downloaded = d.get('downloaded_bytes', 0)
-                speed = d.get('speed') or 0
-                if total and speed:
-                    pct = (downloaded / total) * 100
-                    speed_mb = speed / 1_048_576
-                    eta = d.get('eta', 0)
-                    self.progress.emit({
-                        'percent': pct,
-                        'filename': d.get('filename', ''),
-                        'speed': speed_mb,
-                        'eta': eta,
-                        'playlist_index': d.get('playlist_index'),
-                        'playlist_count': d.get('playlist_count'),
-                    })
-            except yt_dlp.utils.DownloadCancelled:
-                raise
-            except Exception:
-                pass
+        if d['status'] != 'downloading':
+            return
+        try:
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            downloaded = d.get('downloaded_bytes', 0)
+            speed = d.get('speed') or 0
+            if not (total and speed):
+                return
+            pct = (downloaded / total) * 100
+            speed_mb = speed / 1_048_576
+            eta = d.get('eta', 0)
+            playlist_count = d.get('playlist_count') or 0
+            with self._lock:
+                if playlist_count:
+                    self._total = playlist_count
+            self.progress.emit({
+                'percent': pct,
+                'filename': d.get('filename', ''),
+                'speed': speed_mb,
+                'eta': eta,
+                'playlist_index': d.get('playlist_index'),
+                'playlist_count': playlist_count or self._total,
+            })
+        except yt_dlp.utils.DownloadCancelled:
+            raise
+        except Exception:
+            pass
+
+    def postprocessor_hook(self, d):
+        if self._cancel.is_set():
+            return
+        info = d.get('info_dict', {})
+        title = info.get('title', os.path.basename(info.get('filename', '')))
+        if d['status'] == 'started':
+            self.postprocess.emit(f"Converting: {title}…")
+        elif d['status'] == 'finished':
+            self.postprocess.emit('')
+            with self._lock:
+                self._completed += 1
+                done = self._completed
+                total = self._total
+            if total:
+                self.overall.emit(done, total)
 
     def run(self):
         quality_map = {
@@ -65,11 +94,24 @@ class DownloadWorker(QObject):
             '720p':  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
             '480p':  'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
         }
+        archive = os.path.join(self.save_path, '.ytdl-archive')
+        # Playlist videos go into a named subdirectory; single videos stay flat
+        outtmpl = os.path.join(
+            self.save_path,
+            '%(playlist_title&%(playlist_title)s/|)s%(title)s.%(ext)s',
+        )
         ydl_opts = {
             'format': quality_map[self.quality],
             'merge_output_format': 'mp4',
-            'outtmpl': os.path.join(self.save_path, '%(title)s.%(ext)s'),
+            'outtmpl': outtmpl,
             'progress_hooks': [self.progress_hook],
+            'postprocessor_hooks': [self.postprocessor_hook],
+            'download_archive': archive,
+            'continuedl': True,
+            'concurrent_fragment_downloads': 4,
+            'retries': 10,
+            'fragment_retries': 10,
+            'ignoreerrors': True,
             'quiet': True,
         }
         loc = get_ffmpeg_location()
@@ -167,6 +209,7 @@ class YoutubeDownloaderApp(QMainWindow):
             height: 6px;
         }
         QProgressBar::chunk { background-color: #2979ff; border-radius: 4px; }
+        QProgressBar#overall::chunk { background-color: #00e676; border-radius: 4px; }
 
         QTextEdit {
             background-color: #0d0d0d;
@@ -184,11 +227,11 @@ class YoutubeDownloaderApp(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('YouTube Downloader')
-        self.setMinimumSize(640, 560)
-        self.resize(720, 640)
+        self.setMinimumSize(640, 580)
+        self.resize(720, 680)
         self.setWindowIcon(QIcon(resource_path('logo.png')))
         self.setStyleSheet(self._STYLESHEET)
-        self._log_lines = {}  # filename -> block index in log
+        self._log_lines = {}
 
         if not check_ffmpeg_available():
             QMessageBox.warning(self, 'ffmpeg Not Found',
@@ -278,7 +321,7 @@ class YoutubeDownloaderApp(QMainWindow):
         layout.addWidget(self.dl_btn)
         layout.addSpacing(16)
 
-        # Progress
+        # Per-file progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
@@ -295,7 +338,25 @@ class YoutubeDownloaderApp(QMainWindow):
         self.pct_label.setStyleSheet('color: #555; font-size: 12px;')
         stats_row.addWidget(self.pct_label)
         layout.addLayout(stats_row)
-        layout.addSpacing(12)
+        layout.addSpacing(8)
+
+        # Overall playlist progress (hidden for single-video downloads)
+        self.overall_bar = QProgressBar()
+        self.overall_bar.setObjectName('overall')
+        self.overall_bar.setValue(0)
+        self.overall_bar.setTextVisible(False)
+        self.overall_bar.setFixedHeight(4)
+        self.overall_bar.hide()
+        layout.addWidget(self.overall_bar)
+        layout.addSpacing(4)
+
+        overall_row = QHBoxLayout()
+        self.overall_label = QLabel('')
+        self.overall_label.setStyleSheet('color: #00e676; font-size: 11px;')
+        self.overall_label.hide()
+        overall_row.addWidget(self.overall_label)
+        layout.addLayout(overall_row)
+        layout.addSpacing(8)
 
         # Log — expands with window
         self.log_text = QTextEdit()
@@ -328,26 +389,35 @@ class YoutubeDownloaderApp(QMainWindow):
             return
 
         self._log_lines.clear()
-        self.dl_btn.setObjectName('primary')
-        self.dl_btn.setText('Cancel')
         self.dl_btn.setObjectName('cancel')
         self.dl_btn.style().unpolish(self.dl_btn)
         self.dl_btn.style().polish(self.dl_btn)
+        self.dl_btn.setText('Cancel')
         self.dl_btn.clicked.disconnect()
         self.dl_btn.clicked.connect(self._cancel_download)
+
         self.progress_bar.setValue(0)
         self.pct_label.setText('')
+        self.overall_bar.setValue(0)
+        self.overall_bar.hide()
+        self.overall_label.hide()
+        self.overall_label.setText('')
         self.status_label.setText('Starting…')
         self.status_label.setStyleSheet('color: #2979ff; font-size: 12px;')
         self.log_text.clear()
+        self.log_text.append(
+            '↺  Downloads already in archive will be skipped automatically.')
 
         self.thread = QThread()
-        self.worker = DownloadWorker(url, self.save_input.text(), self.quality_combo.currentText())
+        self.worker = DownloadWorker(
+            url, self.save_input.text(), self.quality_combo.currentText())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)
         self.worker.error.connect(self._on_error)
         self.worker.progress.connect(self._on_progress)
+        self.worker.overall.connect(self._on_overall)
+        self.worker.postprocess.connect(self._on_postprocess)
         self.worker.status.connect(self._on_status)
         self.thread.start()
 
@@ -360,6 +430,33 @@ class YoutubeDownloaderApp(QMainWindow):
 
     def _on_status(self, s):
         self.status_label.setText(s)
+
+    def _on_postprocess(self, msg):
+        if msg:
+            self.status_label.setText(msg)
+            self.status_label.setStyleSheet('color: #ffa000; font-size: 12px;')
+        else:
+            self.status_label.setStyleSheet('color: #2979ff; font-size: 12px;')
+
+    def _on_overall(self, done, total):
+        self.overall_bar.setMaximum(total)
+        self.overall_bar.setValue(done)
+        self.overall_bar.show()
+        self.overall_label.setText(f'Completed {done} of {total}')
+        self.overall_label.show()
+
+    def _prune_log(self):
+        doc = self.log_text.document()
+        if doc.blockCount() <= _LOG_LIMIT:
+            return
+        cursor = QTextCursor(doc)
+        cursor.movePosition(QTextCursor.Start)
+        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
+        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)
+        cursor.removeSelectedText()
+        self._log_lines = {
+            k: v - 1 for k, v in self._log_lines.items() if v > 0
+        }
 
     def _on_progress(self, d):
         pct = int(d['percent'])
@@ -379,23 +476,23 @@ class YoutubeDownloaderApp(QMainWindow):
         line = f"{name}{playlist_info}  {pct}%  {speed:.1f} MB/s  ETA {eta}s"
 
         if name in self._log_lines:
-            cursor = self.log_text.textCursor()
-            from PyQt5.QtGui import QTextCursor
             doc = self.log_text.document()
             block = doc.findBlockByNumber(self._log_lines[name])
-            cursor.setPosition(block.position())
+            cursor = QTextCursor(block)
             cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
             cursor.insertText(line)
         else:
+            self._prune_log()
             self.log_text.append(line)
-            block_num = self.log_text.document().blockCount() - 1
-            self._log_lines[name] = block_num
+            self._log_lines[name] = self.log_text.document().blockCount() - 1
 
         if idx and count:
             self.status_label.setText(
                 f'Downloading {idx} of {count}  ·  {speed:.1f} MB/s  ETA {eta}s')
+            self.status_label.setStyleSheet('color: #2979ff; font-size: 12px;')
         else:
             self.status_label.setText(f'{speed:.1f} MB/s  ·  ETA {eta}s')
+            self.status_label.setStyleSheet('color: #2979ff; font-size: 12px;')
 
     def _reset_dl_btn(self):
         self.dl_btn.setObjectName('primary')
@@ -417,7 +514,7 @@ class YoutubeDownloaderApp(QMainWindow):
         self.pct_label.setText('100%')
         self.status_label.setText('Done ✓')
         self.status_label.setStyleSheet('color: #00e676; font-size: 12px;')
-        self.log_text.append('✓  Download complete')
+        self.log_text.append('✓  All downloads complete')
 
     def _on_error(self, msg):
         self.thread.quit()
