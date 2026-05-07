@@ -1,5 +1,6 @@
 import sys
 import os
+import shutil
 import threading
 import urllib.request
 import yt_dlp
@@ -8,6 +9,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QLabel, QProgressBar, QComboBox,
     QFileDialog, QFrame, QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
+    QCheckBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer, QRectF, QPointF
 from PyQt5.QtGui import (
@@ -181,12 +183,20 @@ class DownloadWorker(QObject):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, url, save_path, quality, browser='None'):
+    def __init__(self, url, save_path, quality, browser='None',
+                 concurrent_fragments=8, buffersize=1024*1024,
+                 http_chunk_size=10*1024*1024, socket_timeout=30,
+                 use_aria2c=False):
         super().__init__()
         self.url = url
         self.save_path = save_path
         self.quality = quality
         self.browser = browser
+        self.concurrent_fragments = concurrent_fragments
+        self.buffersize = buffersize
+        self.http_chunk_size = http_chunk_size
+        self.socket_timeout = socket_timeout
+        self.use_aria2c = use_aria2c
         self._cancel = threading.Event()
         self._completed = 0
         self._total = 0
@@ -261,7 +271,10 @@ class DownloadWorker(QObject):
             'postprocessor_hooks': [self.postprocessor_hook],
             'download_archive': archive,
             'continuedl': True,
-            'concurrent_fragment_downloads': 4,
+            'concurrent_fragment_downloads': self.concurrent_fragments,
+            'buffersize': self.buffersize,
+            'http_chunk_size': self.http_chunk_size,
+            'socket_timeout': self.socket_timeout,
             'retries': 10,
             'fragment_retries': 10,
             'ignoreerrors': True,
@@ -272,6 +285,11 @@ class DownloadWorker(QObject):
             ydl_opts['ffmpeg_location'] = loc
         if self.browser and self.browser != 'None':
             ydl_opts['cookiesfrombrowser'] = (_BROWSER_KEY[self.browser],)
+        if self.use_aria2c:
+            ydl_opts['external_downloader'] = 'aria2c'
+            ydl_opts['external_downloader_args'] = {
+                'aria2c': ['-x', '16', '-s', '16', '-k', '1M', '--min-split-size=1M']
+            }
         try:
             self.status.emit('Starting…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -293,6 +311,20 @@ _BROWSERS = [
     'Opera', 'Edge', 'Chromium', 'Vivaldi',
 ]
 _BROWSER_KEY = {b: b.lower() for b in _BROWSERS if b != 'None'}
+
+# Advanced performance options
+_ADV_FRAGMENTS = [('1', 1), ('2', 2), ('4', 4), ('8', 8), ('12', 12), ('16', 16)]
+_ADV_BUFSIZE   = [('256 KB', 256*1024), ('512 KB', 512*1024),
+                  ('1 MB', 1024*1024), ('2 MB', 2*1024*1024), ('4 MB', 4*1024*1024)]
+_ADV_CHUNK     = [('1 MB', 1024*1024), ('5 MB', 5*1024*1024),
+                  ('10 MB', 10*1024*1024), ('25 MB', 25*1024*1024)]
+_ADV_TIMEOUT   = [('10 s', 10), ('30 s', 30), ('60 s', 60)]
+_ARIA2C_FOUND  = shutil.which('aria2c') is not None
+
+_ADV_FRAG_DEFAULT    = 3   # index → 8
+_ADV_BUFSIZE_DEFAULT = 2   # index → 1 MB
+_ADV_CHUNK_DEFAULT   = 2   # index → 10 MB
+_ADV_TIMEOUT_DEFAULT = 1   # index → 30 s
 
 _ACCENT = '#6366f1'
 _ACCENT_HOVER = '#818cf8'
@@ -399,6 +431,29 @@ class YoutubeDownloaderApp(QMainWindow):
             border-radius: 14px;
         }}
         QFrame#divider {{ background: {_BORDER}; max-height: 1px; }}
+
+        QPushButton#adv_toggle {{
+            background: transparent;
+            border: none;
+            color: {_MUTED};
+            font-size: 11px;
+            text-align: left;
+            padding: 2px 0;
+        }}
+        QPushButton#adv_toggle:hover {{ color: {_TEXT}; }}
+
+        QCheckBox {{ color: {_MUTED}; font-size: 12px; spacing: 6px; }}
+        QCheckBox:hover {{ color: {_TEXT}; }}
+        QCheckBox::indicator {{
+            width: 14px; height: 14px;
+            border: 1.5px solid {_BORDER};
+            border-radius: 3px;
+            background: {_SURFACE};
+        }}
+        QCheckBox::indicator:checked {{
+            background: {_ACCENT};
+            border-color: {_ACCENT};
+        }}
     """
 
     def __init__(self):
@@ -566,6 +621,70 @@ class YoutubeDownloaderApp(QMainWindow):
 
         ctrl_layout.addLayout(qb_row)
 
+        # ── Advanced toggle ───────────────────────────────────────────────────
+        self.adv_btn = QPushButton('▸  Advanced')
+        self.adv_btn.setObjectName('adv_toggle')
+        self.adv_btn.setCursor(Qt.PointingHandCursor)
+        self.adv_btn.clicked.connect(self._toggle_advanced)
+        ctrl_layout.addWidget(self.adv_btn)
+
+        # ── Advanced panel (hidden by default) ────────────────────────────────
+        self.adv_panel = QWidget()
+        self.adv_panel.hide()
+        adv = QVBoxLayout(self.adv_panel)
+        adv.setContentsMargins(0, 4, 0, 0)
+        adv.setSpacing(8)
+
+        row1 = QHBoxLayout(); row1.setSpacing(12)
+        fc = QVBoxLayout(); fc.setSpacing(4)
+        fc.addWidget(self._lbl('Fragments'))
+        self.adv_frag = QComboBox()
+        self.adv_frag.addItems([x[0] for x in _ADV_FRAGMENTS])
+        self.adv_frag.setCurrentIndex(_ADV_FRAG_DEFAULT)
+        self.adv_frag.setMinimumHeight(38)
+        fc.addWidget(self.adv_frag)
+        row1.addLayout(fc)
+
+        bc = QVBoxLayout(); bc.setSpacing(4)
+        bc.addWidget(self._lbl('Buffer size'))
+        self.adv_buf = QComboBox()
+        self.adv_buf.addItems([x[0] for x in _ADV_BUFSIZE])
+        self.adv_buf.setCurrentIndex(_ADV_BUFSIZE_DEFAULT)
+        self.adv_buf.setMinimumHeight(38)
+        bc.addWidget(self.adv_buf)
+        row1.addLayout(bc)
+
+        adv.addLayout(row1)
+
+        row2 = QHBoxLayout(); row2.setSpacing(12)
+        cc = QVBoxLayout(); cc.setSpacing(4)
+        cc.addWidget(self._lbl('HTTP chunk size'))
+        self.adv_chunk = QComboBox()
+        self.adv_chunk.addItems([x[0] for x in _ADV_CHUNK])
+        self.adv_chunk.setCurrentIndex(_ADV_CHUNK_DEFAULT)
+        self.adv_chunk.setMinimumHeight(38)
+        cc.addWidget(self.adv_chunk)
+        row2.addLayout(cc)
+
+        tc = QVBoxLayout(); tc.setSpacing(4)
+        tc.addWidget(self._lbl('Socket timeout'))
+        self.adv_timeout = QComboBox()
+        self.adv_timeout.addItems([x[0] for x in _ADV_TIMEOUT])
+        self.adv_timeout.setCurrentIndex(_ADV_TIMEOUT_DEFAULT)
+        self.adv_timeout.setMinimumHeight(38)
+        tc.addWidget(self.adv_timeout)
+        row2.addLayout(tc)
+
+        adv.addLayout(row2)
+
+        self.adv_aria2c = QCheckBox('Use aria2c (faster on high-bandwidth connections)')
+        if not _ARIA2C_FOUND:
+            self.adv_aria2c.setEnabled(False)
+            self.adv_aria2c.setText('Use aria2c  (not found in PATH)')
+        adv.addWidget(self.adv_aria2c)
+
+        ctrl_layout.addWidget(self.adv_panel)
+
         self.controls.hide()
         layout.addWidget(self.controls)
         layout.addSpacing(16)
@@ -630,6 +749,23 @@ class YoutubeDownloaderApp(QMainWindow):
         l = QLabel(text.upper())
         l.setObjectName('section')
         return l
+
+    def _toggle_advanced(self):
+        if self.adv_panel.isVisible():
+            self.adv_panel.hide()
+            self.adv_btn.setText('▸  Advanced')
+        else:
+            self.adv_panel.show()
+            self.adv_btn.setText('▾  Advanced')
+
+    def _adv_opts(self):
+        return dict(
+            concurrent_fragments=_ADV_FRAGMENTS[self.adv_frag.currentIndex()][1],
+            buffersize=_ADV_BUFSIZE[self.adv_buf.currentIndex()][1],
+            http_chunk_size=_ADV_CHUNK[self.adv_chunk.currentIndex()][1],
+            socket_timeout=_ADV_TIMEOUT[self.adv_timeout.currentIndex()][1],
+            use_aria2c=self.adv_aria2c.isChecked(),
+        )
 
     # ── State management ───────────────────────────────────────────────────────
 
@@ -761,7 +897,8 @@ class YoutubeDownloaderApp(QMainWindow):
         self.worker = DownloadWorker(
             url, self.save_input.text(),
             self.quality_combo.currentText(),
-            self.browser_combo.currentText())
+            self.browser_combo.currentText(),
+            **self._adv_opts())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)

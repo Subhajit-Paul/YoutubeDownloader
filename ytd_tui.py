@@ -2,6 +2,7 @@
 
 import os
 import sys
+import shutil
 import threading
 from pathlib import Path
 
@@ -37,6 +38,15 @@ _BROWSER_OPTS = [
     ("Chromium",   "chromium"),
     ("Vivaldi",    "vivaldi"),
 ]
+
+_ADV_FRAG_OPTS    = [("1",  "1"), ("2", "2"), ("4", "4"), ("8", "8"),
+                     ("12", "12"), ("16", "16")]
+_ADV_BUF_OPTS     = [("256 KB", "262144"), ("512 KB", "524288"),
+                     ("1 MB", "1048576"), ("2 MB", "2097152"), ("4 MB", "4194304")]
+_ADV_CHUNK_OPTS   = [("1 MB", "1048576"), ("5 MB", "5242880"),
+                     ("10 MB", "10485760"), ("25 MB", "26214400")]
+_ADV_TIMEOUT_OPTS = [("10 s", "10"), ("30 s", "30"), ("60 s", "60")]
+_ARIA2C_FOUND     = shutil.which("aria2c") is not None
 
 _QUALITY_MAP = {
     "Best":  "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
@@ -113,6 +123,12 @@ class YTDApp(App):
         background: #2979ff;
     }
 
+    /* ── Advanced section ───────────────────────────────── */
+    #adv-section { display: none; height: auto; margin-bottom: 1; }
+    #adv-section.adv-visible { display: block; }
+
+    #adv-row { height: 3; margin-bottom: 1; }
+
     /* ── Buttons ─────────────────────────────────────────── */
     #btn-row { height: 3; margin-bottom: 1; }
     Button { margin-right: 1; }
@@ -143,6 +159,15 @@ class YTDApp(App):
         margin-left: auto;
     }
     Button#log-btn:hover { background: #282828; color: #aaa; }
+
+    Button#adv-btn {
+        background: #1e1e1e;
+        border: tall #2e2e2e;
+        color: #555;
+        min-width: 22;
+    }
+    Button#adv-btn:hover { background: #282828; color: #aaa; }
+    Button#adv-btn.active { color: #aaa; border: tall #555; }
 
     /* ── Divider ─────────────────────────────────────────── */
     #divider {
@@ -190,6 +215,7 @@ class YTDApp(App):
         Binding("ctrl+d", "download", "Download", priority=True),
         Binding("ctrl+x", "cancel_dl", "Cancel", priority=True),
         Binding("ctrl+l", "toggle_log", "Toggle log"),
+        Binding("ctrl+a", "toggle_adv", "Advanced"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
@@ -226,9 +252,22 @@ class YTDApp(App):
                 yield Select(_BITRATE_OPTS, id="bitrate-select", value="320")
                 yield Select(_BROWSER_OPTS, id="browser-select", value="none")
 
+            with Vertical(id="adv-section"):
+                with Horizontal(id="adv-row"):
+                    yield Select(_ADV_FRAG_OPTS,    id="adv-frag",    value="8",       prompt="Fragments")
+                    yield Select(_ADV_BUF_OPTS,     id="adv-buf",     value="1048576", prompt="Buffer")
+                    yield Select(_ADV_CHUNK_OPTS,   id="adv-chunk",   value="10485760",prompt="Chunk size")
+                    yield Select(_ADV_TIMEOUT_OPTS, id="adv-timeout", value="30",      prompt="Timeout")
+                if _ARIA2C_FOUND:
+                    yield Select(
+                        [("aria2c off", "0"), ("aria2c on", "1")],
+                        id="adv-aria2c", value="0", prompt="aria2c"
+                    )
+
             with Horizontal(id="btn-row"):
                 yield Button("Download  [ctrl+d]", id="download-btn")
                 yield Button("Cancel  [ctrl+x]", id="cancel-btn", disabled=True)
+                yield Button("Advanced  [ctrl+a]", id="adv-btn")
                 yield Button("Show log  [ctrl+l]", id="log-btn", variant="default")
 
             Label(id="divider")
@@ -293,6 +332,10 @@ class YTDApp(App):
     def on_log_pressed(self, _) -> None:
         self.action_toggle_log()
 
+    @on(Button.Pressed, "#adv-btn")
+    def on_adv_pressed(self, _) -> None:
+        self.action_toggle_adv()
+
     # ── Actions ──────────────────────────────────────────────────────────────
 
     def action_download(self) -> None:
@@ -315,6 +358,11 @@ class YTDApp(App):
         fmt = self._sel("#format-select", "mp3")
         bitrate = self._sel("#bitrate-select", "320")
         browser = self._sel("#browser-select", "none")
+        adv_frag    = int(self._sel("#adv-frag",    "8"))
+        adv_buf     = int(self._sel("#adv-buf",     "1048576"))
+        adv_chunk   = int(self._sel("#adv-chunk",   "10485760"))
+        adv_timeout = int(self._sel("#adv-timeout", "30"))
+        adv_aria2c  = _ARIA2C_FOUND and self._sel("#adv-aria2c", "0") == "1"
 
         self._cancel_event.clear()
         with self._lock:
@@ -347,7 +395,10 @@ class YTDApp(App):
             self._reset_ui()
             return
 
-        self._run_download(url, save_path, is_audio, quality, fmt, bitrate, browser)
+        self._run_download(
+            url, save_path, is_audio, quality, fmt, bitrate, browser,
+            adv_frag, adv_buf, adv_chunk, adv_timeout, adv_aria2c,
+        )
 
     def action_cancel_dl(self) -> None:
         if self.query_one("#cancel-btn", Button).disabled:
@@ -369,6 +420,18 @@ class YTDApp(App):
             log.add_class("log-visible")
             btn.label = "Hide log  [ctrl+l]"
 
+    def action_toggle_adv(self) -> None:
+        sec = self.query_one("#adv-section")
+        btn = self.query_one("#adv-btn", Button)
+        if "adv-visible" in sec.classes:
+            sec.remove_class("adv-visible")
+            btn.label = "Advanced  [ctrl+a]"
+            btn.remove_class("active")
+        else:
+            sec.add_class("adv-visible")
+            btn.label = "Hide adv  [ctrl+a]"
+            btn.add_class("active")
+
     # ── Download worker ──────────────────────────────────────────────────────
 
     def _sel(self, selector: str, default: str) -> str:
@@ -385,6 +448,11 @@ class YTDApp(App):
         fmt: str,
         bitrate: str,
         browser: str = "none",
+        concurrent_fragments: int = 8,
+        buffersize: int = 1024 * 1024,
+        http_chunk_size: int = 10 * 1024 * 1024,
+        socket_timeout: int = 30,
+        use_aria2c: bool = False,
     ) -> None:
         cancel = self._cancel_event
 
@@ -448,7 +516,10 @@ class YTDApp(App):
             "postprocessor_hooks": [postprocessor_hook],
             "download_archive": archive,
             "continuedl": True,
-            "concurrent_fragment_downloads": 4,
+            "concurrent_fragment_downloads": concurrent_fragments,
+            "buffersize": buffersize,
+            "http_chunk_size": http_chunk_size,
+            "socket_timeout": socket_timeout,
             "retries": 10,
             "fragment_retries": 10,
             "ignoreerrors": True,
@@ -460,6 +531,11 @@ class YTDApp(App):
             base_opts["ffmpeg_location"] = loc
         if browser and browser != "none":
             base_opts["cookiesfrombrowser"] = (browser,)
+        if use_aria2c:
+            base_opts["external_downloader"] = "aria2c"
+            base_opts["external_downloader_args"] = {
+                "aria2c": ["-x", "16", "-s", "16", "-k", "1M", "--min-split-size=1M"]
+            }
 
         if is_audio:
             ydl_opts = {
