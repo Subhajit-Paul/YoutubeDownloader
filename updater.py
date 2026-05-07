@@ -2,10 +2,12 @@
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
-import tempfile
+import urllib.error
 import urllib.request
+import webbrowser
 
 from version import GITHUB_REPO, __version__
 
@@ -46,16 +48,26 @@ def check_update(app_slug):
         if _parse_version(tag) > _parse_version(__version__):
             dl_url, name = _find_asset(data["assets"], app_slug)
             return tag, dl_url, name, data["html_url"]
-    except Exception:
-        pass
+    except Exception as exc:
+        print(f"[updater] check_update failed: {exc}", file=sys.stderr)
     return None, None, None, None
 
 
 def download_file(url, dest, progress_cb=None):
-    def _hook(block, block_size, total):
-        if progress_cb and total > 0:
-            progress_cb(min(100, block * block_size * 100 // total))
-    urllib.request.urlretrieve(url, dest, _hook)
+    req = urllib.request.Request(url, headers={"User-Agent": "YTD-Updater/1.0"})
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        total = int(resp.headers.get("Content-Length") or 0)
+        downloaded = 0
+        chunk = 65536
+        with open(dest, "wb") as f:
+            while True:
+                block = resp.read(chunk)
+                if not block:
+                    break
+                f.write(block)
+                downloaded += len(block)
+                if progress_cb and total:
+                    progress_cb(min(100, downloaded * 100 // total))
 
 
 def launch_installer(path):
@@ -64,4 +76,11 @@ def launch_installer(path):
     elif sys.platform == "darwin":
         subprocess.Popen(["open", path])
     else:
-        subprocess.Popen(["pkexec", "dpkg", "-i", path])
+        # Try graphical sudo tools in order; fall back to browser download page
+        for tool in ("pkexec", "gksudo", "kdesudo"):
+            if shutil.which(tool):
+                subprocess.Popen([tool, "dpkg", "-i", path])
+                return
+        webbrowser.open(
+            f"https://github.com/{GITHUB_REPO}/releases/latest"
+        )
