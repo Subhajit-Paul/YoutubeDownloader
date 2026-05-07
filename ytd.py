@@ -181,11 +181,12 @@ class DownloadWorker(QObject):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, url, save_path, quality):
+    def __init__(self, url, save_path, quality, browser='None'):
         super().__init__()
         self.url = url
         self.save_path = save_path
         self.quality = quality
+        self.browser = browser
         self._cancel = threading.Event()
         self._completed = 0
         self._total = 0
@@ -269,6 +270,8 @@ class DownloadWorker(QObject):
         loc = get_ffmpeg_location()
         if loc:
             ydl_opts['ffmpeg_location'] = loc
+        if self.browser and self.browser != 'None':
+            ydl_opts['cookiesfrombrowser'] = (_BROWSER_KEY[self.browser],)
         try:
             self.status.emit('Starting…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -284,6 +287,12 @@ class DownloadWorker(QObject):
 
 
 # ── Main window ────────────────────────────────────────────────────────────────
+
+_BROWSERS = [
+    'None', 'Chrome', 'Firefox', 'Brave', 'Safari',
+    'Opera', 'Edge', 'Chromium', 'Vivaldi',
+]
+_BROWSER_KEY = {b: b.lower() for b in _BROWSERS if b != 'None'}
 
 _ACCENT = '#6366f1'
 _ACCENT_HOVER = '#818cf8'
@@ -536,11 +545,26 @@ class YoutubeDownloaderApp(QMainWindow):
         save_row.addWidget(browse_btn)
         ctrl_layout.addLayout(save_row)
 
-        ctrl_layout.addWidget(self._lbl('Quality'))
+        # Quality + browser cookies on one row
+        qb_row = QHBoxLayout(); qb_row.setSpacing(12)
+
+        qual_col = QVBoxLayout(); qual_col.setSpacing(6)
+        qual_col.addWidget(self._lbl('Quality'))
         self.quality_combo = QComboBox()
         self.quality_combo.addItems(['Best', '1080p', '720p', '480p'])
         self.quality_combo.setMinimumHeight(44)
-        ctrl_layout.addWidget(self.quality_combo)
+        qual_col.addWidget(self.quality_combo)
+        qb_row.addLayout(qual_col)
+
+        browser_col = QVBoxLayout(); browser_col.setSpacing(6)
+        browser_col.addWidget(self._lbl('Cookies from browser'))
+        self.browser_combo = QComboBox()
+        self.browser_combo.addItems(_BROWSERS)
+        self.browser_combo.setMinimumHeight(44)
+        browser_col.addWidget(self.browser_combo)
+        qb_row.addLayout(browser_col)
+
+        ctrl_layout.addLayout(qb_row)
 
         self.controls.hide()
         layout.addWidget(self.controls)
@@ -735,7 +759,9 @@ class YoutubeDownloaderApp(QMainWindow):
         self._set_downloading()
         self.thread = QThread()
         self.worker = DownloadWorker(
-            url, self.save_input.text(), self.quality_combo.currentText())
+            url, self.save_input.text(),
+            self.quality_combo.currentText(),
+            self.browser_combo.currentText())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)

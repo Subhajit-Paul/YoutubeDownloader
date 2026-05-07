@@ -26,6 +26,17 @@ _QUALITY_OPTS = [
 ]
 _FORMAT_OPTS = [(f, f) for f in ("mp3", "aac", "m4a", "opus", "flac", "wav")]
 _BITRATE_OPTS = [(f"{b} kbps", b) for b in ("320", "256", "192", "128", "64")]
+_BROWSER_OPTS = [
+    ("No cookies", "none"),
+    ("Chrome",     "chrome"),
+    ("Firefox",    "firefox"),
+    ("Brave",      "brave"),
+    ("Safari",     "safari"),
+    ("Opera",      "opera"),
+    ("Edge",       "edge"),
+    ("Chromium",   "chromium"),
+    ("Vivaldi",    "vivaldi"),
+]
 
 _QUALITY_MAP = {
     "Best":  "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
@@ -202,6 +213,7 @@ class YTDApp(App):
                 yield Select(_QUALITY_OPTS, id="quality-select", value="Best")
                 yield Select(_FORMAT_OPTS, id="format-select", value="mp3")
                 yield Select(_BITRATE_OPTS, id="bitrate-select", value="320")
+                yield Select(_BROWSER_OPTS, id="browser-select", value="none")
 
             with Horizontal(id="btn-row"):
                 yield Button("Download  [ctrl+d]", id="download-btn")
@@ -286,6 +298,7 @@ class YTDApp(App):
         quality = self._sel("#quality-select", "Best")
         fmt = self._sel("#format-select", "mp3")
         bitrate = self._sel("#bitrate-select", "320")
+        browser = self._sel("#browser-select", "none")
 
         self._cancel_event.clear()
         with self._lock:
@@ -303,9 +316,12 @@ class YTDApp(App):
         self.query_one("#progress-section").add_class("active")
 
         mode_str = "audio" if is_audio else "video"
+        cookie_str = (
+            f"  [dim]cookies from {browser}[/]" if browser != "none" else ""
+        )
         log.write("")
         log.write(
-            f"[bold]▶  Starting {mode_str} download[/]  [dim]{url}[/]"
+            f"[bold]▶  Starting {mode_str} download[/]{cookie_str}  [dim]{url}[/]"
         )
 
         try:
@@ -315,7 +331,7 @@ class YTDApp(App):
             self._reset_ui()
             return
 
-        self._run_download(url, save_path, is_audio, quality, fmt, bitrate)
+        self._run_download(url, save_path, is_audio, quality, fmt, bitrate, browser)
 
     def action_cancel_dl(self) -> None:
         if self.query_one("#cancel-btn", Button).disabled:
@@ -345,6 +361,7 @@ class YTDApp(App):
         quality: str,
         fmt: str,
         bitrate: str,
+        browser: str = "none",
     ) -> None:
         cancel = self._cancel_event
 
@@ -418,6 +435,8 @@ class YTDApp(App):
         loc = get_ffmpeg_location()
         if loc:
             base_opts["ffmpeg_location"] = loc
+        if browser and browser != "none":
+            base_opts["cookiesfrombrowser"] = (browser,)
 
         if is_audio:
             ydl_opts = {

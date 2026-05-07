@@ -22,6 +22,12 @@ from update_ui import start_update_check
 
 _BITRATES = ['320', '256', '192', '128', '64']
 
+_BROWSERS = [
+    'None', 'Chrome', 'Firefox', 'Brave', 'Safari',
+    'Opera', 'Edge', 'Chromium', 'Vivaldi',
+]
+_BROWSER_KEY = {b: b.lower() for b in _BROWSERS if b != 'None'}
+
 
 def _fmt_dur(secs):
     if not secs:
@@ -177,12 +183,13 @@ class DownloadWorker(QObject):
     error = pyqtSignal(str)
     status = pyqtSignal(str)
 
-    def __init__(self, url, save_path, audio_format, audio_quality):
+    def __init__(self, url, save_path, audio_format, audio_quality, browser='None'):
         super().__init__()
         self.url = url
         self.save_path = save_path
         self.audio_format = audio_format
         self.audio_quality = audio_quality
+        self.browser = browser
         self._cancel = threading.Event()
         self._completed = 0
         self._total = 0
@@ -264,6 +271,8 @@ class DownloadWorker(QObject):
         loc = get_ffmpeg_location()
         if loc:
             ydl_opts['ffmpeg_location'] = loc
+        if self.browser and self.browser != 'None':
+            ydl_opts['cookiesfrombrowser'] = (_BROWSER_KEY[self.browser],)
         try:
             self.status.emit('Starting…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -334,6 +343,23 @@ class YoutubeAudioDownloaderApp(QMainWindow):
             selection-background-color: {_ACCENT};
         }}
         QLineEdit:focus {{ border-color: {_ACCENT}; }}
+
+        QComboBox {{
+            background: {_SURFACE};
+            border: 1.5px solid {_BORDER};
+            border-radius: 10px;
+            padding: 11px 14px;
+            color: {_TEXT};
+            font-size: 14px;
+        }}
+        QComboBox:focus {{ border-color: {_ACCENT}; }}
+        QComboBox::drop-down {{ border: none; width: 28px; }}
+        QComboBox QAbstractItemView {{
+            background: {_SURFACE};
+            color: {_TEXT};
+            selection-background-color: {_ACCENT};
+            border: 1px solid {_BORDER};
+        }}
 
         QPushButton {{
             background: {_SURFACE};
@@ -574,6 +600,12 @@ class YoutubeAudioDownloaderApp(QMainWindow):
         save_row.addWidget(browse_btn)
         ctrl_layout.addLayout(save_row)
 
+        ctrl_layout.addWidget(self._lbl('Cookies from browser'))
+        self.browser_combo = QComboBox()
+        self.browser_combo.addItems(_BROWSERS)
+        self.browser_combo.setMinimumHeight(44)
+        ctrl_layout.addWidget(self.browser_combo)
+
         self.controls.hide()
         layout.addWidget(self.controls)
         layout.addSpacing(16)
@@ -769,7 +801,8 @@ class YoutubeAudioDownloaderApp(QMainWindow):
         qual = self._selected_bitrate()
         self.thread = QThread()
         self.worker = DownloadWorker(
-            url, self.save_input.text(), fmt, qual)
+            url, self.save_input.text(), fmt, qual,
+            self.browser_combo.currentText())
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)
