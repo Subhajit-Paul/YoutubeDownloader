@@ -47,9 +47,8 @@ jobs:
 
       - name: Build debug APK
         working-directory: android
-        run: buildozer android debug
+        run: yes | buildozer android debug
         env:
-          # Speed up consecutive builds
           CCACHE_DIR: ${{ github.workspace }}/.ccache
 
       - name: Find built APK
