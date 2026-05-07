@@ -119,6 +119,9 @@ jobs:
       - name: Build audio downloader
         run: pyinstaller youtube-audio-downloader.spec --noconfirm
 
+      - name: Build TUI downloader
+        run: pyinstaller youtube-tui.spec --noconfirm
+
       # ── Linux: .deb packages ───────────────────────────────────────────────
       - name: Create .deb packages (Linux)
         if: runner.os == 'Linux'
@@ -127,11 +130,15 @@ jobs:
           VERSION=${{ steps.version.outputs.version }}
           bash packaging/linux/make-deb.sh youtube-downloader       "YouTube Downloader"       "$VERSION"
           bash packaging/linux/make-deb.sh youtube-audio-downloader "YouTube Audio Downloader" "$VERSION"
+          bash packaging/linux/make-deb.sh youtube-tui              "YouTube Downloader TUI"   "$VERSION" \
+            "Terminal UI downloader for YouTube videos and audio using yt-dlp."
           mkdir -p release
           mv "youtube-downloader_${VERSION}_amd64.deb" \
              "release/youtube-downloader-linux-x86_64.deb"
           mv "youtube-audio-downloader_${VERSION}_amd64.deb" \
              "release/youtube-audio-downloader-linux-x86_64.deb"
+          mv "youtube-tui_${VERSION}_amd64.deb" \
+             "release/youtube-tui-linux-x86_64.deb"
 
       # ── Windows: NSIS installers ────────────────────────────────────────────
       - name: Create NSIS installers (Windows)
@@ -141,6 +148,7 @@ jobs:
           mkdir release
           makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
           makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
+          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-tui.nsi
 
       # ── macOS: DMG ─────────────────────────────────────────────────────────
       - name: Create DMG packages (macOS)
@@ -171,6 +179,10 @@ jobs:
             --no-internet-enable \
             "release/youtube-audio-downloader-${SUFFIX}.dmg" \
             "dist/YouTube Audio Downloader.app"
+
+          # TUI: tar.gz is more appropriate than .dmg for a CLI tool
+          tar -czf "release/youtube-tui-${SUFFIX}.tar.gz" \
+            -C dist youtube-tui
 
       # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload build artifacts

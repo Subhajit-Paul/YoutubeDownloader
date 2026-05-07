@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=YouTube Downloader TUI
+Comment=Download videos and audio from YouTube (terminal UI)
+Exec=youtube-tui
+Icon=youtube-tui
+Terminal=true
+Type=Application
+Categories=Network;Video;AudioVideo;
+StartupNotify=false

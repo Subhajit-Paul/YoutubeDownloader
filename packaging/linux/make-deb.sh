@@ -6,6 +6,7 @@ set -euo pipefail
 APP="$1"
 DISPLAY="$2"
 VERSION="$3"
+DESC="${4:-Download videos and audio from YouTube using yt-dlp.}"
 ARCH="amd64"
 PKG="${APP}_${VERSION}_${ARCH}"
 
@@ -32,7 +33,7 @@ Architecture: ${ARCH}
 Maintainer: Subhajit Paul <test.dev.paul@gmail.com>
 Depends: ffmpeg
 Description: ${DISPLAY}
- Desktop application to download videos and audio from YouTube using yt-dlp.
+ ${DESC}
 EOF
 
 cat > "${PKG}/DEBIAN/postinst" <<'EOF'
