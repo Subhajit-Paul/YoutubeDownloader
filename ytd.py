@@ -1,16 +1,17 @@
 import sys
 import os
 import shutil
-import webbrowser
 import yt_dlp
 from pathlib import Path
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
-    QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit,
-    QFrame, QGraphicsOpacityEffect, QDialog, QMessageBox
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLineEdit, QPushButton, QLabel, QProgressBar, QComboBox,
+    QFileDialog, QTextEdit, QFrame, QMessageBox, QSizePolicy
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QPropertyAnimation, QEasingCurve, QTimer
-from PyQt5.QtGui import QFont, QPixmap, QDesktopServices
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
+from PyQt5.QtGui import QFont, QIcon
+from qt_material import apply_stylesheet
+
 
 def resource_path(relative_path):
     try:
@@ -19,21 +20,23 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
+
 def get_ffmpeg_location():
-    """Return directory containing ffmpeg binary, or None to let yt-dlp search PATH."""
     if hasattr(sys, '_MEIPASS'):
-        # Bundled ffmpeg lives alongside other extracted files
         return sys._MEIPASS
     return None
 
+
 def check_ffmpeg_available():
-    """Return True if ffmpeg can be found either bundled or in PATH."""
     if hasattr(sys, '_MEIPASS'):
-        for name in ('ffmpeg', 'ffmpeg.exe'):
-            if os.path.exists(os.path.join(sys._MEIPASS, name)):
-                return True
-        return False
+        return any(
+            os.path.exists(os.path.join(sys._MEIPASS, n))
+            for n in ('ffmpeg', 'ffmpeg.exe')
+        )
     return shutil.which('ffmpeg') is not None
+
+
+# ── Download worker ────────────────────────────────────────────────────────────
 
 class DownloadWorker(QObject):
     progress = pyqtSignal(dict)
@@ -48,39 +51,33 @@ class DownloadWorker(QObject):
         self.quality = quality
 
     def progress_hook(self, d):
-        if d['status'] == 'downloading':
-            # Calculate download speed and progress
-            try:
-                total = d.get('total_bytes', 0) or d.get('total_bytes_estimate', 0)
-                downloaded = d.get('downloaded_bytes', 0)
-                speed = d.get('speed', 0)
-                
-                if total and speed:
-                    percent = (downloaded / total) * 100
-                    speed_mb = speed / 1024 / 1024  # Convert to MB/s
-                    eta = d.get('eta', 0)
-                    
-                    status_text = f"Speed: {speed_mb:.2f} MB/s | ETA: {eta} seconds"
-                    self.status.emit(status_text)
-                    
-                    progress_data = {
-                        'percent': percent,
-                        'filename': d.get('filename', ''),
-                        'speed': speed_mb,
-                        'eta': eta
-                    }
-                    self.progress.emit(progress_data)
-            except Exception as e:
-                self.error.emit(f"Error calculating progress: {str(e)}")
+        if d['status'] != 'downloading':
+            return
+        try:
+            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
+            downloaded = d.get('downloaded_bytes', 0)
+            speed = d.get('speed') or 0
+            if total and speed:
+                pct = (downloaded / total) * 100
+                speed_mb = speed / 1_048_576
+                eta = d.get('eta', 0)
+                self.status.emit(f"{speed_mb:.1f} MB/s  ·  ETA {eta}s")
+                self.progress.emit({
+                    'percent': pct,
+                    'filename': d.get('filename', ''),
+                    'speed': speed_mb,
+                    'eta': eta,
+                })
+        except Exception:
+            pass
 
     def run(self):
         quality_map = {
-            "Highest": "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-            "1080p": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-            "720p": "bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
-            "480p": "bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]"
+            'Best':  'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+            '1080p': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+            '720p':  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+            '480p':  'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
         }
-        
         ydl_opts = {
             'format': quality_map[self.quality],
             'merge_output_format': 'mp4',
@@ -88,245 +85,291 @@ class DownloadWorker(QObject):
             'progress_hooks': [self.progress_hook],
             'quiet': True,
         }
-        ffmpeg_loc = get_ffmpeg_location()
-        if ffmpeg_loc:
-            ydl_opts['ffmpeg_location'] = ffmpeg_loc
-
+        loc = get_ffmpeg_location()
+        if loc:
+            ydl_opts['ffmpeg_location'] = loc
         try:
-            self.status.emit("Starting download...")
+            self.status.emit('Starting download…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([self.url])
             self.finished.emit()
-        except Exception as e:
-            self.error.emit(str(e))
+        except Exception as exc:
+            self.error.emit(str(exc))
+
+
+# ── Main window ────────────────────────────────────────────────────────────────
 
 class YoutubeDownloaderApp(QMainWindow):
+
+    _STYLESHEET = """
+        QMainWindow, QWidget#root { background-color: #121212; }
+
+        QLabel#section { color: #9e9e9e; font-size: 11px; letter-spacing: 1px;
+                         text-transform: uppercase; margin-top: 4px; }
+
+        QLineEdit {
+            background-color: #1e1e1e;
+            border: 1px solid #2e2e2e;
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #f0f0f0;
+            font-size: 14px;
+            selection-background-color: #2979ff;
+        }
+        QLineEdit:focus { border-color: #2979ff; }
+
+        QComboBox {
+            background-color: #1e1e1e;
+            border: 1px solid #2e2e2e;
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #f0f0f0;
+            font-size: 14px;
+        }
+        QComboBox::drop-down { border: none; width: 28px; }
+        QComboBox QAbstractItemView {
+            background-color: #1e1e1e;
+            color: #f0f0f0;
+            selection-background-color: #2979ff;
+            border: 1px solid #333;
+        }
+
+        QPushButton {
+            background-color: #1e1e1e;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 10px 18px;
+            color: #f0f0f0;
+            font-size: 13px;
+        }
+        QPushButton:hover { background-color: #2a2a2a; border-color: #444; }
+        QPushButton:pressed { background-color: #111; }
+
+        QPushButton#primary {
+            background-color: #2979ff;
+            border: none;
+            color: #fff;
+            font-size: 15px;
+            font-weight: bold;
+            border-radius: 10px;
+            padding: 14px;
+        }
+        QPushButton#primary:hover { background-color: #448aff; }
+        QPushButton#primary:pressed { background-color: #1565c0; }
+        QPushButton#primary:disabled { background-color: #1a2a4a; color: #555; }
+
+        QProgressBar {
+            background-color: #1e1e1e;
+            border: none;
+            border-radius: 4px;
+            height: 6px;
+        }
+        QProgressBar::chunk { background-color: #2979ff; border-radius: 4px; }
+
+        QTextEdit {
+            background-color: #0d0d0d;
+            color: #9e9e9e;
+            border: 1px solid #1e1e1e;
+            border-radius: 8px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+        }
+
+        QFrame#divider { background-color: #222; max-height: 1px; }
+    """
+
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("YouTube Downloader")
-        self.setMinimumSize(900, 600)
+        self.setWindowTitle('YouTube Downloader')
+        self.setMinimumSize(640, 560)
+        self.resize(720, 600)
+        self.setWindowIcon(QIcon(resource_path('logo.png')))
+        self.setStyleSheet(self._STYLESHEET)
+
         if not check_ffmpeg_available():
-            QMessageBox.warning(
-                self,
-                "ffmpeg Not Found",
-                "ffmpeg was not found on your system.\n\n"
-                "Video merging and some formats require ffmpeg:\n"
-                "  • macOS:   brew install ffmpeg\n"
-                "  • Linux:   sudo apt install ffmpeg\n"
-                "  • Windows: https://ffmpeg.org/download.html"
-            )
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #121212;
-            }
-            QLabel {
-                color: #e0e0e0;
-                font-size: 14px;
-            }
-            QLineEdit, QComboBox {
-                background-color: #2c2c2c;
-                border: 1px solid #333333;
-                border-radius: 5px;
-                padding: 8px;
-                color: #e0e0e0;
-                font-size: 14px;
-            }
-            QPushButton {
-                background-color: #2962ff;
-                border-radius: 5px;
-                padding: 10px;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #0039cb;
-            }
-            QPushButton:pressed {
-                background-color: #001f80;
-            }
-            QProgressBar {
-                background-color: #2c2c2c;
-                border: 1px solid #333333;
-                border-radius: 5px;
-                height: 20px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #2962ff;
-                border-radius: 5px;
-            }
-            QTextEdit {
-                background-color: #1a1a1a;
-                color: #e0e0e0;
-                border: 1px solid #333333;
-                border-radius: 5px;
-                padding: 10px;
-                font-family: monospace;
-                font-size: 13px;
-            }
-        """)
-        self.initUI()
+            QMessageBox.warning(self, 'ffmpeg Not Found',
+                'ffmpeg is required for video merging but was not found.\n\n'
+                '  • macOS:   brew install ffmpeg\n'
+                '  • Linux:   sudo apt install ffmpeg\n'
+                '  • Windows: https://ffmpeg.org/download.html')
 
-    def initUI(self):
-        main_layout = QVBoxLayout()
-        central_widget = QWidget()
-        central_widget.setLayout(main_layout)
-        self.setCentralWidget(central_widget)
+        self._build_ui()
 
-        # App Logo
-        logo_label = QLabel()
-        pixmap = QPixmap(resource_path("logo.png"))
-        logo_label.setPixmap(pixmap.scaled(620, 620, Qt.KeepAspectRatio))
-        logo_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(logo_label)
+    def _build_ui(self):
+        root = QWidget()
+        root.setObjectName('root')
+        self.setCentralWidget(root)
 
-        # URL Input
-        url_layout = QHBoxLayout()
-        url_label = QLabel("YouTube URL:")
+        layout = QVBoxLayout(root)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(0)
+
+        # Header
+        header = QHBoxLayout()
+        title = QLabel('YouTube Downloader')
+        title.setFont(QFont('', 20, QFont.Bold))
+        title.setStyleSheet('color: #ffffff;')
+        header.addWidget(title)
+        header.addStretch()
+        from version import __version__
+        badge = QLabel(f'v{__version__}')
+        badge.setStyleSheet(
+            'background:#1e1e1e; color:#555; border-radius:4px;'
+            'padding:2px 8px; font-size:11px;')
+        header.addWidget(badge)
+        layout.addLayout(header)
+        layout.addSpacing(16)
+
+        divider = QFrame()
+        divider.setObjectName('divider')
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        layout.addSpacing(20)
+
+        # URL
+        layout.addWidget(self._section_label('YouTube URL'))
+        layout.addSpacing(6)
+        url_row = QHBoxLayout()
+        url_row.setSpacing(8)
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("Enter YouTube URL")
-        url_layout.addWidget(url_label)
-        url_layout.addWidget(self.url_input)
-        main_layout.addLayout(url_layout)
+        self.url_input.setPlaceholderText('https://youtube.com/watch?v=…')
+        self.url_input.setMinimumHeight(44)
+        url_row.addWidget(self.url_input)
+        paste_btn = QPushButton('Paste')
+        paste_btn.setFixedSize(72, 44)
+        paste_btn.clicked.connect(
+            lambda: self.url_input.setText(QApplication.clipboard().text()))
+        url_row.addWidget(paste_btn)
+        layout.addLayout(url_row)
+        layout.addSpacing(16)
 
-        # Save Path
-        save_layout = QHBoxLayout()
-        save_label = QLabel("Save Location:")
-        self.save_input = QLineEdit(str(Path.home() / "Downloads"))
-        browse_btn = QPushButton("Browse")
-        browse_btn.clicked.connect(self.browse_location)
-        save_layout.addWidget(save_label)
-        save_layout.addWidget(self.save_input)
-        save_layout.addWidget(browse_btn)
-        main_layout.addLayout(save_layout)
+        # Save folder
+        layout.addWidget(self._section_label('Save to'))
+        layout.addSpacing(6)
+        save_row = QHBoxLayout()
+        save_row.setSpacing(8)
+        self.save_input = QLineEdit(str(Path.home() / 'Downloads'))
+        self.save_input.setMinimumHeight(44)
+        save_row.addWidget(self.save_input)
+        browse_btn = QPushButton('Browse')
+        browse_btn.setFixedSize(80, 44)
+        browse_btn.clicked.connect(self._browse)
+        save_row.addWidget(browse_btn)
+        layout.addLayout(save_row)
+        layout.addSpacing(16)
 
-        # Quality Selection
-        quality_layout = QHBoxLayout()
-        quality_label = QLabel("Quality:")
+        # Quality
+        layout.addWidget(self._section_label('Quality'))
+        layout.addSpacing(6)
         self.quality_combo = QComboBox()
-        self.quality_combo.addItems(["Highest", "1080p", "720p", "480p"])
-        quality_layout.addWidget(quality_label)
-        quality_layout.addWidget(self.quality_combo)
-        main_layout.addLayout(quality_layout)
+        self.quality_combo.addItems(['Best', '1080p', '720p', '480p'])
+        self.quality_combo.setMinimumHeight(44)
+        layout.addWidget(self.quality_combo)
+        layout.addSpacing(20)
 
-        # Status Label
-        self.status_label = QLabel()
-        self.status_label.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.status_label)
+        # Download button
+        self.dl_btn = QPushButton('Download')
+        self.dl_btn.setObjectName('primary')
+        self.dl_btn.setMinimumHeight(52)
+        self.dl_btn.clicked.connect(self._start_download)
+        layout.addWidget(self.dl_btn)
+        layout.addSpacing(16)
 
-        # Progress Bar
+        # Progress
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
-        main_layout.addWidget(self.progress_bar)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setFixedHeight(6)
+        layout.addWidget(self.progress_bar)
+        layout.addSpacing(6)
 
-        # Download Button
-        self.download_button = QPushButton("Download")
-        self.download_button.clicked.connect(self.handle_download_click)
-        main_layout.addWidget(self.download_button)
+        stats_row = QHBoxLayout()
+        self.status_label = QLabel('Ready')
+        self.status_label.setStyleSheet('color: #555; font-size: 12px;')
+        stats_row.addWidget(self.status_label)
+        stats_row.addStretch()
+        self.pct_label = QLabel('')
+        self.pct_label.setStyleSheet('color: #555; font-size: 12px;')
+        stats_row.addWidget(self.pct_label)
+        layout.addLayout(stats_row)
+        layout.addSpacing(12)
 
-        # Log Text
-        log_label = QLabel("Download Log:")
-        main_layout.addWidget(log_label)
+        # Log
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
-        self.log_text.setMinimumHeight(150)
-        main_layout.addWidget(self.log_text)
+        self.log_text.setFixedHeight(110)
+        layout.addWidget(self.log_text)
 
-        # About Button
-        self.about_button = QPushButton("About")
-        self.about_button.clicked.connect(self.toggle_about_panel)
-        main_layout.addWidget(self.about_button)
+    def _section_label(self, text):
+        lbl = QLabel(text.upper())
+        lbl.setObjectName('section')
+        return lbl
 
-        # About Panel
-        self.about_panel = QWidget()
-        self.about_panel.setFixedWidth(300)
-        self.about_panel.setStyleSheet("background-color: #1e1e1e; padding: 15px;")
-        about_layout = QVBoxLayout(self.about_panel)
-        
-        about_text = QLabel("""
-            <b>YouTube Downloader</b><br>
-            <i>Developed by <a href='https://github.com/Subhajit-Paul' style='color:#2962ff;'>Subhajit Paul</a></i><br><br>
-            📧 Email: <a href='mailto:test.dev.paul@gmail.com' style='color:#2962ff;'>test.dev.paul@gmail.com</a><br>
-            🔗 <a href='https://in.linkedin.com/in/stochasticgradientdescent' style='color:#2962ff;'>LinkedIn Profile</a>
-        """)
-        about_text.setOpenExternalLinks(True)
-        about_layout.addWidget(about_text)
-        self.about_panel.setLayout(about_layout)
-        self.about_panel.hide()
-        main_layout.addWidget(self.about_panel)
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, 'Select folder', self.save_input.text())
+        if d:
+            self.save_input.setText(d)
 
-    def browse_location(self):
-        directory = QFileDialog.getExistingDirectory(self, "Select Download Location", self.save_input.text())
-        if directory:
-            self.save_input.setText(directory)
-
-    def handle_download_click(self):
+    def _start_download(self):
         url = self.url_input.text().strip()
         if not url:
-            self.log_text.append("Error: Please enter a YouTube URL")
+            self.log_text.append('⚠  Please enter a URL.')
             return
-        
-        save_path = self.save_input.text().strip()
-        self.download_button.setEnabled(False)
+        self.dl_btn.setEnabled(False)
+        self.dl_btn.setText('Downloading…')
         self.progress_bar.setValue(0)
+        self.pct_label.setText('')
+        self.status_label.setText('Starting…')
+        self.status_label.setStyleSheet('color: #2979ff; font-size: 12px;')
         self.log_text.clear()
-        
-        # Create and setup worker thread
+
         self.thread = QThread()
-        self.worker = DownloadWorker(url, save_path, self.quality_combo.currentText())
+        self.worker = DownloadWorker(
+            url, self.save_input.text(), self.quality_combo.currentText())
         self.worker.moveToThread(self.thread)
-        
-        # Connect signals
         self.thread.started.connect(self.worker.run)
-        self.worker.finished.connect(self.download_complete)
-        self.worker.error.connect(self.download_error)
-        self.worker.progress.connect(self.update_progress)
-        self.worker.status.connect(self.update_status)
-        
-        # Start download
-        self.log_text.append("Starting download...")
+        self.worker.finished.connect(self._on_done)
+        self.worker.error.connect(self._on_error)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.status.connect(lambda s: self.status_label.setText(s))
         self.thread.start()
 
-    def update_progress(self, progress_data):
-        self.progress_bar.setValue(int(progress_data['percent']))
-        filename = os.path.basename(progress_data['filename'])
-        self.log_text.append(
-            f"Downloading: {filename}\n"
-            f"Progress: {progress_data['percent']:.1f}%\n"
-            f"Speed: {progress_data['speed']:.2f} MB/s\n"
-            f"ETA: {progress_data['eta']} seconds\n"
-        )
+    def _on_progress(self, d):
+        pct = int(d['percent'])
+        self.progress_bar.setValue(pct)
+        self.pct_label.setText(f'{pct}%')
+        name = os.path.basename(d['filename'])
+        if name:
+            self.log_text.append(
+                f"{name}  {pct}%  {d['speed']:.1f} MB/s  ETA {d['eta']}s")
 
-    def update_status(self, status):
-        self.status_label.setText(status)
-
-    def download_complete(self):
-        self.thread.quit()
-        self.thread.wait()
-        self.download_button.setEnabled(True)
-        self.status_label.setText("Download completed successfully!")
-        self.log_text.append("Download completed successfully!")
+    def _on_done(self):
+        self.thread.quit(); self.thread.wait()
+        self.dl_btn.setEnabled(True)
+        self.dl_btn.setText('Download')
         self.progress_bar.setValue(100)
+        self.pct_label.setText('100%')
+        self.status_label.setText('Done ✓')
+        self.status_label.setStyleSheet('color: #00e676; font-size: 12px;')
+        self.log_text.append('✓  Download complete')
 
-    def download_error(self, error_msg):
-        self.thread.quit()
-        self.thread.wait()
-        self.download_button.setEnabled(True)
-        self.status_label.setText("Error occurred during download")
-        self.log_text.append(f"Error: {error_msg}")
+    def _on_error(self, msg):
+        self.thread.quit(); self.thread.wait()
+        self.dl_btn.setEnabled(True)
+        self.dl_btn.setText('Download')
         self.progress_bar.setValue(0)
+        self.pct_label.setText('')
+        self.status_label.setText('Failed')
+        self.status_label.setStyleSheet('color: #ff5252; font-size: 12px;')
+        self.log_text.append(f'✗  {msg}')
 
-    def toggle_about_panel(self):
-        if self.about_panel.isVisible():
-            self.about_panel.hide()
-        else:
-            self.about_panel.show()
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    apply_stylesheet(app, theme='dark_blue.xml', invert_secondary=True)
     window = YoutubeDownloaderApp()
     window.show()
     from update_ui import start_update_check
-    QTimer.singleShot(3000, lambda: start_update_check(window, "youtube-downloader"))
+    QTimer.singleShot(3000, lambda: start_update_check(window, 'youtube-downloader'))
     sys.exit(app.exec_())

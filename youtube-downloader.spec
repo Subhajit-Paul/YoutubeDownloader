@@ -2,6 +2,7 @@
 import os
 import shutil
 import sys
+from PyInstaller.utils.hooks import collect_data_files
 
 # Bundle ffmpeg if present in project root (downloaded by CI) or via which on macOS
 ffmpeg_binaries = []
@@ -14,12 +15,14 @@ else:
     elif sys.platform == 'darwin' and shutil.which('ffmpeg'):
         ffmpeg_binaries.append((shutil.which('ffmpeg'), '.'))
 
+icon_file = 'logo.ico' if sys.platform == 'win32' and os.path.exists('logo.ico') else 'logo.png'
+
 a = Analysis(
     ['ytd.py'],
     pathex=[],
     binaries=ffmpeg_binaries,
-    datas=[('logo.png', '.'), ('version.py', '.'), ('updater.py', '.'), ('update_ui.py', '.')],
-    hiddenimports=[],
+    datas=collect_data_files('qt_material') + [('logo.png', '.')],
+    hiddenimports=['update_ui', 'updater', 'version', 'qt_material'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -41,6 +44,7 @@ if sys.platform == 'darwin':
         upx=True,
         console=False,
         argv_emulation=True,
+        icon='logo.icns' if os.path.exists('logo.icns') else None,
     )
     coll = COLLECT(
         exe,
@@ -54,6 +58,7 @@ if sys.platform == 'darwin':
         coll,
         name='YouTube Downloader.app',
         bundle_identifier='com.subhajitpaul.youtubedownloader',
+        icon='logo.icns' if os.path.exists('logo.icns') else None,
         info_plist={
             'NSHighResolutionCapable': True,
             'LSMinimumSystemVersion': '12.0',
@@ -79,5 +84,5 @@ else:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
-        icon=['logo.png'],
+        icon=icon_file,
     )
