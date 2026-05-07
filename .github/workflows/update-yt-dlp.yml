@@ -1,0 +1,61 @@
+name: Auto-update yt-dlp
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Get versions
+        id: versions
+        run: |
+          LATEST=$(curl -sf https://pypi.org/pypi/yt-dlp/json \
+            | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['version'])")
+          CURRENT=$(grep '^yt-dlp==' requirements.txt | cut -d= -f3)
+          echo "latest=$LATEST"   >> "$GITHUB_OUTPUT"
+          echo "current=$CURRENT" >> "$GITHUB_OUTPUT"
+          if [ "$LATEST" != "$CURRENT" ]; then
+            echo "needs_update=true"  >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_update=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update requirements files
+        if: steps.versions.outputs.needs_update == 'true'
+        run: |
+          NEW=${{ steps.versions.outputs.latest }}
+          sed -i "s/^yt-dlp==.*/yt-dlp==${NEW}/" requirements.txt
+          sed -i "s/^yt-dlp==.*/yt-dlp==${NEW}/" requirements-build.txt
+
+      - name: Create pull request
+        if: steps.versions.outputs.needs_update == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: update yt-dlp to ${{ steps.versions.outputs.latest }}"
+          title: "chore: update yt-dlp ${{ steps.versions.outputs.current }} → ${{ steps.versions.outputs.latest }}"
+          body: |
+            Automated yt-dlp version bump.
+
+            | | Version |
+            |---|---|
+            | Previous | `${{ steps.versions.outputs.current }}` |
+            | New      | `${{ steps.versions.outputs.latest }}` |
+
+            See [yt-dlp changelog](https://github.com/yt-dlp/yt-dlp/blob/master/Changelog.md) for details.
+          branch: chore/update-yt-dlp-${{ steps.versions.outputs.latest }}
+          delete-branch: true

@@ -1,12 +1,13 @@
 import sys
 import os
+import shutil
 import webbrowser
 import yt_dlp
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
     QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit,
-    QFrame, QGraphicsOpacityEffect, QDialog
+    QFrame, QGraphicsOpacityEffect, QDialog, QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QPropertyAnimation, QEasingCurve
 from PyQt5.QtGui import QFont, QPixmap, QDesktopServices
@@ -16,8 +17,23 @@ def resource_path(relative_path):
         base_path = sys._MEIPASS
     except Exception:
         base_path = os.path.abspath(".")
-
     return os.path.join(base_path, relative_path)
+
+def get_ffmpeg_location():
+    """Return directory containing ffmpeg binary, or None to let yt-dlp search PATH."""
+    if hasattr(sys, '_MEIPASS'):
+        # Bundled ffmpeg lives alongside other extracted files
+        return sys._MEIPASS
+    return None
+
+def check_ffmpeg_available():
+    """Return True if ffmpeg can be found either bundled or in PATH."""
+    if hasattr(sys, '_MEIPASS'):
+        for name in ('ffmpeg', 'ffmpeg.exe'):
+            if os.path.exists(os.path.join(sys._MEIPASS, name)):
+                return True
+        return False
+    return shutil.which('ffmpeg') is not None
 
 class DownloadWorker(QObject):
     progress = pyqtSignal(dict)
@@ -72,7 +88,10 @@ class DownloadWorker(QObject):
             'progress_hooks': [self.progress_hook],
             'quiet': True,
         }
-        
+        ffmpeg_loc = get_ffmpeg_location()
+        if ffmpeg_loc:
+            ydl_opts['ffmpeg_location'] = ffmpeg_loc
+
         try:
             self.status.emit("Starting download...")
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -86,6 +105,16 @@ class YoutubeDownloaderApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("YouTube Downloader")
         self.setMinimumSize(900, 600)
+        if not check_ffmpeg_available():
+            QMessageBox.warning(
+                self,
+                "ffmpeg Not Found",
+                "ffmpeg was not found on your system.\n\n"
+                "Video merging and some formats require ffmpeg:\n"
+                "  • macOS:   brew install ffmpeg\n"
+                "  • Linux:   sudo apt install ffmpeg\n"
+                "  • Windows: https://ffmpeg.org/download.html"
+            )
         self.setStyleSheet("""
             QMainWindow {
                 background-color: #121212;

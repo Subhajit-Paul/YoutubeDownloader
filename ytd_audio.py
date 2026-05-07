@@ -1,12 +1,29 @@
 import sys
 import os
+import shutil
 import yt_dlp
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLineEdit,
-    QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit
+    QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit,
+    QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread
+
+
+def get_ffmpeg_location():
+    if hasattr(sys, '_MEIPASS'):
+        return sys._MEIPASS
+    return None
+
+
+def check_ffmpeg_available():
+    if hasattr(sys, '_MEIPASS'):
+        for name in ('ffmpeg', 'ffmpeg.exe'):
+            if os.path.exists(os.path.join(sys._MEIPASS, name)):
+                return True
+        return False
+    return shutil.which('ffmpeg') is not None
 
 
 class DownloadWorker(QObject):
@@ -49,18 +66,21 @@ class DownloadWorker(QObject):
 
     def run(self):
         ydl_opts = {
-                    'format': 'bestaudio/best',
-                    'outtmpl': os.path.join(self.save_path, '%(title)s.%(ext)s'),
-                    'postprocessors': [{
-                        'key': 'FFmpegExtractAudio',
-                        'preferredcodec': self.audio_format,
-                        'preferredquality': self.audio_quality,
-                    }],
-                    'progress_hooks': [self.progress_hook],
-                    'quiet': True,
-                    'noplaylist': False,  # Support playlists
-                    'ignoreerrors': True,  # ✅ Skip unavailable/private videos and continue
-                }
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join(self.save_path, '%(title)s.%(ext)s'),
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': self.audio_format,
+                'preferredquality': self.audio_quality,
+            }],
+            'progress_hooks': [self.progress_hook],
+            'quiet': True,
+            'noplaylist': False,
+            'ignoreerrors': True,
+        }
+        ffmpeg_loc = get_ffmpeg_location()
+        if ffmpeg_loc:
+            ydl_opts['ffmpeg_location'] = ffmpeg_loc
 
         try:
             self.status.emit(f"Downloading as {self.audio_format.upper()} ({self.audio_quality}kbps)...")
@@ -76,6 +96,15 @@ class YoutubeDownloaderApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("YouTube Audio Downloader")
         self.setMinimumSize(600, 400)
+        if not check_ffmpeg_available():
+            QMessageBox.warning(
+                self,
+                "ffmpeg Not Found",
+                "ffmpeg is required for audio extraction but was not found.\n\n"
+                "  • macOS:   brew install ffmpeg\n"
+                "  • Linux:   sudo apt install ffmpeg\n"
+                "  • Windows: https://ffmpeg.org/download.html"
+            )
         self.initUI()
 
     def initUI(self):

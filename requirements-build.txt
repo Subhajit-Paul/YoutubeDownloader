@@ -1,0 +1,6 @@
+# Runtime dependencies
+-r requirements.txt
+
+# Build/packaging tools
+pyinstaller==6.12.0
+pyinstaller-hooks-contrib==2025.1

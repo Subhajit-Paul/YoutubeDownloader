@@ -1,5 +1,11 @@
-*.spec
-YTD-env
-dist
-build
-.venv
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+.venv/
+*.egg-info/
+ffmpeg
+ffmpeg.exe
+android/.buildozer/
+android/bin/

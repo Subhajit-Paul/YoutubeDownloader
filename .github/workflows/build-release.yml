@@ -1,0 +1,132 @@
+name: Build and Release (Desktop)
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+            artifact_suffix: linux-x86_64
+          - os: windows-latest
+            platform: windows
+            arch: x86_64
+            artifact_suffix: windows-x86_64
+          - os: macos-13
+            platform: macos
+            arch: x86_64
+            artifact_suffix: macos-x86_64
+          - os: macos-14
+            platform: macos
+            arch: arm64
+            artifact_suffix: macos-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      # ── System deps ────────────────────────────────────────────────────────
+      - name: Install Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-xinerama0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libgl1-mesa-dev libegl1
+
+      # ── ffmpeg ─────────────────────────────────────────────────────────────
+      - name: Download static ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          wget -q "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
+            -O ffmpeg.tar.xz
+          tar -xf ffmpeg.tar.xz --strip-components=2 \
+            --wildcards "*/bin/ffmpeg"
+          chmod +x ffmpeg
+          rm ffmpeg.tar.xz
+
+      - name: Download static ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+          Move-Item "ffmpeg_tmp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" ".\ffmpeg.exe"
+          Remove-Item -Recurse -Force ffmpeg_tmp, ffmpeg.zip
+
+      - name: Install and bundle ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg --quiet
+          cp "$(which ffmpeg)" ./ffmpeg
+
+      # ── Python deps & build ────────────────────────────────────────────────
+      - name: Install Python dependencies
+        run: pip install -r requirements-build.txt
+
+      - name: Build video downloader
+        run: pyinstaller youtube-downloader.spec --noconfirm
+
+      - name: Build audio downloader
+        run: pyinstaller youtube-audio-downloader.spec --noconfirm
+
+      # ── Package artifacts ──────────────────────────────────────────────────
+      - name: Package (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p release
+          tar -czf release/youtube-downloader-${{ matrix.artifact_suffix }}.tar.gz \
+            -C dist youtube-downloader
+          tar -czf release/youtube-audio-downloader-${{ matrix.artifact_suffix }}.tar.gz \
+            -C dist youtube-audio-downloader
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force release | Out-Null
+          Compress-Archive -Path "dist\youtube-downloader.exe" `
+            -DestinationPath "release\youtube-downloader-${{ matrix.artifact_suffix }}.zip"
+          Compress-Archive -Path "dist\youtube-audio-downloader.exe" `
+            -DestinationPath "release\youtube-audio-downloader-${{ matrix.artifact_suffix }}.zip"
+
+      - name: Package (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p release
+          zip -j "release/youtube-downloader-${{ matrix.artifact_suffix }}.zip" \
+            dist/youtube-downloader
+          zip -j "release/youtube-audio-downloader-${{ matrix.artifact_suffix }}.zip" \
+            dist/youtube-audio-downloader
+
+      # ── Upload ─────────────────────────────────────────────────────────────
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_suffix }}
+          path: release/
+
+      - name: Publish to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
+          generate_release_notes: true
