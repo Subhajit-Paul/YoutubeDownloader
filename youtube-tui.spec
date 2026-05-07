@@ -24,7 +24,7 @@ a = Analysis(
     ),
     hiddenimports=(
         collect_submodules("textual") +
-        ["common", "version", "updater"]
+        ["common", "version", "updater", "dep_check"]
     ),
     hookspath=[],
     hooksconfig={},

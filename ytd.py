@@ -3,7 +3,10 @@ import os
 import shutil
 import threading
 import urllib.request
-import yt_dlp
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -16,7 +19,10 @@ from PyQt5.QtGui import (
     QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor,
     QLinearGradient, QPen,
 )
-from qt_material import apply_stylesheet
+try:
+    from qt_material import apply_stylesheet
+except ImportError:
+    def apply_stylesheet(*a, **kw): pass
 
 from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
@@ -469,13 +475,6 @@ class YoutubeDownloaderApp(QMainWindow):
         self._fetch_timer.setSingleShot(True)
         self._fetch_timer.setInterval(1000)
         self._fetch_timer.timeout.connect(self._fetch_metadata)
-
-        if not check_ffmpeg_available():
-            QMessageBox.warning(self, 'ffmpeg Not Found',
-                'ffmpeg is required for video merging.\n\n'
-                '  • macOS:   brew install ffmpeg\n'
-                '  • Linux:   sudo apt install ffmpeg\n'
-                '  • Windows: https://ffmpeg.org/download.html')
 
         self._build_ui()
 
@@ -973,6 +972,16 @@ class YoutubeDownloaderApp(QMainWindow):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+
+    from dep_check import check_deps, DepDialog
+    from PyQt5.QtWidgets import QDialog
+    issues = check_deps()
+    if issues:
+        dlg = DepDialog(issues)
+        result = dlg.exec_()
+        if any(d['required'] for d in issues) or result != QDialog.Accepted:
+            sys.exit(1)
+
     apply_stylesheet(app, theme='dark_blue.xml', invert_secondary=True)
     window = YoutubeDownloaderApp()
     window.show()

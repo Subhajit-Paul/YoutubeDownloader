@@ -6,7 +6,10 @@ import shutil
 import threading
 from pathlib import Path
 
-import yt_dlp
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -296,14 +299,30 @@ class YTDApp(App):
             f"[bold white]YouTube Downloader TUI[/]  [dim]v{__version__}[/]  "
             "— downloads resume automatically via per-directory archive"
         )
-        if not check_ffmpeg_available():
-            log.write(
-                "\n[bold yellow]⚠  ffmpeg not found.[/] "
-                "Audio conversion and video merging will fail.\n"
-                "   [dim]macOS:[/] brew install ffmpeg  "
-                "[dim]Linux:[/] sudo apt install ffmpeg  "
-                "[dim]Windows:[/] https://ffmpeg.org/download.html"
-            )
+
+        # ── Dependency checks ─────────────────────────────────────────────────
+        from dep_check import check_deps
+        issues = check_deps(check_qt_material=False)
+        if issues:
+            log.add_class("log-visible")
+            self.query_one("#log-btn", Button).label = "Hide log  [ctrl+l]"
+            log.write("")
+            has_required = any(d['required'] for d in issues)
+            if has_required:
+                log.write("[bold red]✗  Missing required dependencies — downloads disabled.[/]")
+            else:
+                log.write("[bold yellow]⚠  Some optional dependencies are missing.[/]")
+            for dep in issues:
+                colour = "red" if dep['required'] else "yellow"
+                log.write(
+                    f"  [{colour}]{'✗' if dep['required'] else '⚠'}  {dep['name']}[/]  "
+                    f"[dim]{dep['reason']}[/]"
+                )
+                log.write(
+                    f"    Install:  [bold cyan]{dep['cmd']}[/]"
+                )
+            if has_required:
+                self.query_one("#download-btn", Button).disabled = True
 
         self.set_timer(3.0, self._check_for_update)
 
@@ -554,6 +573,11 @@ class YTDApp(App):
                 "format": _QUALITY_MAP.get(quality, _QUALITY_MAP["Best"]),
                 "merge_output_format": "mp4",
             }
+
+        if yt_dlp is None:
+            self.call_from_thread(
+                self._ui_error, "yt-dlp is not installed — run: pip install yt-dlp")
+            return
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
