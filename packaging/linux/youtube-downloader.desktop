@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=YouTube Downloader
+Comment=Download videos from YouTube
+Exec=youtube-downloader
+Icon=youtube-downloader
+Terminal=false
+Type=Application
+Categories=Network;Video;
+StartupNotify=true

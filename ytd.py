@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit,
     QFrame, QGraphicsOpacityEffect, QDialog, QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QPropertyAnimation, QEasingCurve
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QPropertyAnimation, QEasingCurve, QTimer
 from PyQt5.QtGui import QFont, QPixmap, QDesktopServices
 
 def resource_path(relative_path):
@@ -327,4 +327,6 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = YoutubeDownloaderApp()
     window.show()
+    from update_ui import start_update_check
+    QTimer.singleShot(3000, lambda: start_update_check(window, "youtube-downloader"))
     sys.exit(app.exec_())

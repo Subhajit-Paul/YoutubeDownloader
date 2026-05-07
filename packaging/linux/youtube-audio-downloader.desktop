@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=YouTube Audio Downloader
+Comment=Download audio and playlists from YouTube
+Exec=youtube-audio-downloader
+Icon=youtube-audio-downloader
+Terminal=false
+Type=Application
+Categories=Network;Audio;
+StartupNotify=true

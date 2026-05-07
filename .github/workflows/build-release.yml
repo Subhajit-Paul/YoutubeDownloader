@@ -17,19 +17,15 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
-            arch: x86_64
             artifact_suffix: linux-x86_64
           - os: windows-latest
             platform: windows
-            arch: x86_64
             artifact_suffix: windows-x86_64
           - os: macos-13
             platform: macos
-            arch: x86_64
             artifact_suffix: macos-x86_64
           - os: macos-14
             platform: macos
-            arch: arm64
             artifact_suffix: macos-arm64
 
     runs-on: ${{ matrix.os }}
@@ -41,6 +37,17 @@ jobs:
         with:
           python-version: '3.13'
 
+      # ── Version ────────────────────────────────────────────────────────────
+      - name: Extract version from tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev" >> "$GITHUB_OUTPUT"
+          fi
+
       # ── System deps ────────────────────────────────────────────────────────
       - name: Install Qt system libraries (Linux)
         if: runner.os == 'Linux'
@@ -49,7 +56,32 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxcb-cursor0 libxcb-xinerama0 libxkbcommon-x11-0 \
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
-            libxcb-render-util0 libxcb-shape0 libgl1-mesa-dev libegl1
+            libxcb-render-util0 libxcb-shape0 libgl1-mesa-dev libegl1 \
+            dpkg-dev
+
+      - name: Install NSIS (Windows)
+        if: runner.os == 'Windows'
+        run: choco install nsis --no-progress -y
+
+      # ── Icons ──────────────────────────────────────────────────────────────
+      - name: Create Windows icon (logo.ico)
+        if: runner.os == 'Windows'
+        shell: python
+        run: |
+          from PIL import Image
+          img = Image.open("logo.png").convert("RGBA")
+          img.save("logo.ico", format="ICO",
+                   sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
+
+      - name: Create macOS icon (logo.icns)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p logo.iconset
+          for size in 16 32 64 128 256 512; do
+            sips -z $size $size logo.png --out logo.iconset/icon_${size}x${size}.png \
+              >/dev/null 2>&1
+          done
+          iconutil -c icns logo.iconset -o logo.icns
 
       # ── ffmpeg ─────────────────────────────────────────────────────────────
       - name: Download static ffmpeg (Linux)
@@ -57,8 +89,7 @@ jobs:
         run: |
           wget -q "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
             -O ffmpeg.tar.xz
-          tar -xf ffmpeg.tar.xz --strip-components=2 \
-            --wildcards "*/bin/ffmpeg"
+          tar -xf ffmpeg.tar.xz --strip-components=2 --wildcards "*/bin/ffmpeg"
           chmod +x ffmpeg
           rm ffmpeg.tar.xz
 
@@ -72,13 +103,13 @@ jobs:
           Move-Item "ffmpeg_tmp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" ".\ffmpeg.exe"
           Remove-Item -Recurse -Force ffmpeg_tmp, ffmpeg.zip
 
-      - name: Install and bundle ffmpeg (macOS)
+      - name: Install and copy ffmpeg (macOS)
         if: runner.os == 'macOS'
         run: |
           brew install ffmpeg --quiet
           cp "$(which ffmpeg)" ./ffmpeg
 
-      # ── Python deps & build ────────────────────────────────────────────────
+      # ── Python deps & PyInstaller build ────────────────────────────────────
       - name: Install Python dependencies
         run: pip install -r requirements-build.txt
 
@@ -88,34 +119,58 @@ jobs:
       - name: Build audio downloader
         run: pyinstaller youtube-audio-downloader.spec --noconfirm
 
-      # ── Package artifacts ──────────────────────────────────────────────────
-      - name: Package (Linux)
+      # ── Linux: .deb packages ───────────────────────────────────────────────
+      - name: Create .deb packages (Linux)
         if: runner.os == 'Linux'
         run: |
+          chmod +x packaging/linux/make-deb.sh
+          VERSION=${{ steps.version.outputs.version }}
+          bash packaging/linux/make-deb.sh youtube-downloader       "YouTube Downloader"       "$VERSION"
+          bash packaging/linux/make-deb.sh youtube-audio-downloader "YouTube Audio Downloader" "$VERSION"
           mkdir -p release
-          tar -czf release/youtube-downloader-${{ matrix.artifact_suffix }}.tar.gz \
-            -C dist youtube-downloader
-          tar -czf release/youtube-audio-downloader-${{ matrix.artifact_suffix }}.tar.gz \
-            -C dist youtube-audio-downloader
+          mv "youtube-downloader_${VERSION}_amd64.deb" \
+             "release/youtube-downloader-linux-x86_64.deb"
+          mv "youtube-audio-downloader_${VERSION}_amd64.deb" \
+             "release/youtube-audio-downloader-linux-x86_64.deb"
 
-      - name: Package (Windows)
+      # ── Windows: NSIS installers ────────────────────────────────────────────
+      - name: Create NSIS installers (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Force release | Out-Null
-          Compress-Archive -Path "dist\youtube-downloader.exe" `
-            -DestinationPath "release\youtube-downloader-${{ matrix.artifact_suffix }}.zip"
-          Compress-Archive -Path "dist\youtube-audio-downloader.exe" `
-            -DestinationPath "release\youtube-audio-downloader-${{ matrix.artifact_suffix }}.zip"
+          mkdir release
+          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
+          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
 
-      - name: Package (macOS)
+      # ── macOS: DMG ─────────────────────────────────────────────────────────
+      - name: Create DMG packages (macOS)
         if: runner.os == 'macOS'
         run: |
+          brew install create-dmg --quiet
           mkdir -p release
-          zip -j "release/youtube-downloader-${{ matrix.artifact_suffix }}.zip" \
-            dist/youtube-downloader
-          zip -j "release/youtube-audio-downloader-${{ matrix.artifact_suffix }}.zip" \
-            dist/youtube-audio-downloader
+          SUFFIX=${{ matrix.artifact_suffix }}
+
+          create-dmg \
+            --volname "YouTube Downloader" \
+            --volicon "logo.icns" \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --icon "YouTube Downloader.app" 150 150 \
+            --app-drop-link 450 150 \
+            --no-internet-enable \
+            "release/youtube-downloader-${SUFFIX}.dmg" \
+            "dist/YouTube Downloader.app"
+
+          create-dmg \
+            --volname "YouTube Audio Downloader" \
+            --volicon "logo.icns" \
+            --window-size 600 300 \
+            --icon-size 100 \
+            --icon "YouTube Audio Downloader.app" 150 150 \
+            --app-drop-link 450 150 \
+            --no-internet-enable \
+            "release/youtube-audio-downloader-${SUFFIX}.dmg" \
+            "dist/YouTube Audio Downloader.app"
 
       # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload build artifacts

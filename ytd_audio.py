@@ -8,7 +8,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QProgressBar, QComboBox, QFileDialog, QTextEdit,
     QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
 
 
 def get_ffmpeg_location():
@@ -243,4 +243,6 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = YoutubeDownloaderApp()
     window.show()
+    from update_ui import start_update_check
+    QTimer.singleShot(3000, lambda: start_update_check(window, "youtube-audio-downloader"))
     sys.exit(app.exec_())
