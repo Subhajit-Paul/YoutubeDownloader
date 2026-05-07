@@ -63,16 +63,7 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install nsis --no-progress -y
 
-      # ── Icons ──────────────────────────────────────────────────────────────
-      - name: Create Windows icon (logo.ico)
-        if: runner.os == 'Windows'
-        shell: python
-        run: |
-          from PIL import Image
-          img = Image.open("logo.png").convert("RGBA")
-          img.save("logo.ico", format="ICO",
-                   sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
-
+      # ── macOS icon (sips is built-in, no deps needed) ─────────────────────
       - name: Create macOS icon (logo.icns)
         if: runner.os == 'macOS'
         run: |
@@ -112,6 +103,15 @@ jobs:
       # ── Python deps & PyInstaller build ────────────────────────────────────
       - name: Install Python dependencies
         run: pip install -r requirements-build.txt
+
+      - name: Create Windows icon (logo.ico)
+        if: runner.os == 'Windows'
+        shell: python
+        run: |
+          from PIL import Image
+          img = Image.open("logo.png").convert("RGBA")
+          img.save("logo.ico", format="ICO",
+                   sizes=[(256,256),(128,128),(64,64),(32,32),(16,16)])
 
       - name: Build video downloader
         run: pyinstaller youtube-downloader.spec --noconfirm
