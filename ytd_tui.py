@@ -135,6 +135,15 @@ class YTDApp(App):
     Button#cancel-btn:hover { background: #2a1010; }
     Button#cancel-btn:disabled { border: tall #333; color: #444; }
 
+    Button#log-btn {
+        background: #1e1e1e;
+        border: tall #2e2e2e;
+        color: #666;
+        min-width: 22;
+        margin-left: auto;
+    }
+    Button#log-btn:hover { background: #282828; color: #aaa; }
+
     /* ── Divider ─────────────────────────────────────────── */
     #divider {
         height: 1;
@@ -172,13 +181,15 @@ class YTDApp(App):
         border: solid #1e1e1e;
         background: #080808;
         padding: 0 1;
+        display: none;
     }
+    RichLog.log-visible { display: block; }
     """
 
     BINDINGS = [
         Binding("ctrl+d", "download", "Download", priority=True),
         Binding("ctrl+x", "cancel_dl", "Cancel", priority=True),
-        Binding("ctrl+l", "clear_log", "Clear log"),
+        Binding("ctrl+l", "toggle_log", "Toggle log"),
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
@@ -218,6 +229,7 @@ class YTDApp(App):
             with Horizontal(id="btn-row"):
                 yield Button("Download  [ctrl+d]", id="download-btn")
                 yield Button("Cancel  [ctrl+x]", id="cancel-btn", disabled=True)
+                yield Button("Show log  [ctrl+l]", id="log-btn", variant="default")
 
             Label(id="divider")
 
@@ -276,6 +288,10 @@ class YTDApp(App):
     @on(Button.Pressed, "#cancel-btn")
     def on_cancel_pressed(self, _) -> None:
         self.action_cancel_dl()
+
+    @on(Button.Pressed, "#log-btn")
+    def on_log_pressed(self, _) -> None:
+        self.action_toggle_log()
 
     # ── Actions ──────────────────────────────────────────────────────────────
 
@@ -343,8 +359,15 @@ class YTDApp(App):
         )
         self.query_one("#speed-label", Label).update("")
 
-    def action_clear_log(self) -> None:
-        self.query_one("#log", RichLog).clear()
+    def action_toggle_log(self) -> None:
+        log = self.query_one("#log", RichLog)
+        btn = self.query_one("#log-btn", Button)
+        if "log-visible" in log.classes:
+            log.remove_class("log-visible")
+            btn.label = "Show log  [ctrl+l]"
+        else:
+            log.add_class("log-visible")
+            btn.label = "Hide log  [ctrl+l]"
 
     # ── Download worker ──────────────────────────────────────────────────────
 
