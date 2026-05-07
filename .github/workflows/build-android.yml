@@ -31,8 +31,6 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             git zip unzip zlib1g-dev \
-            libgstreamer1.0-dev gstreamer1.0-plugins-base \
-            libgstreamer-plugins-base1.0-dev \
             autoconf libtool pkg-config automake \
             libffi-dev libssl-dev \
             ccache
