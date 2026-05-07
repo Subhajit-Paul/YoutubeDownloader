@@ -41,7 +41,7 @@ jobs:
         run: pip install buildozer==1.5.0 cython==3.0.11
 
       - name: Cache buildozer global directory
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.buildozer
           key: buildozer-${{ runner.os }}-${{ hashFiles('android/buildozer.spec') }}
