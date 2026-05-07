@@ -1,29 +1,178 @@
 import sys
 import os
 import threading
+import urllib.request
 import yt_dlp
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QLabel, QProgressBar, QComboBox,
-    QFileDialog, QTextEdit, QFrame, QMessageBox, QSizePolicy
+    QFileDialog, QFrame, QMessageBox, QGraphicsDropShadowEffect,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer
-from PyQt5.QtGui import QFont, QTextCursor
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer, QRectF, QPointF
+from PyQt5.QtGui import (
+    QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor,
+    QLinearGradient,
+)
 from qt_material import apply_stylesheet
 
-from common import get_ffmpeg_location, check_ffmpeg_available
+from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
 from update_ui import start_update_check
 
 _BITRATES = ['320', '256', '192', '128', '64']
-_LOG_LIMIT = 200
+
+
+def _fmt_dur(secs):
+    if not secs:
+        return ''
+    h, m, s = int(secs) // 3600, (int(secs) % 3600) // 60, int(secs) % 60
+    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
+
+
+# ── Thumbnail widget ────────────────────────────────────────────────────────────
+
+class _ThumbWidget(QWidget):
+    """Rounded thumbnail that reveals left-to-right as download progresses."""
+
+    W, H, R = 200, 113, 10
+
+    def __init__(self):
+        super().__init__()
+        self.setFixedSize(self.W, self.H)
+        self._pix = None
+        self._pct = 0.0
+        self._placeholder_text = '♪'
+
+    def setPixmap(self, pix: QPixmap):
+        self._pix = pix
+        self.update()
+
+    def setProgress(self, pct: float):
+        self._pct = pct
+        self.update()
+
+    def setPlaceholderText(self, t: str):
+        self._placeholder_text = t
+        self.update()
+
+    def reset(self):
+        self._pix = None
+        self._pct = 0.0
+        self._placeholder_text = '♪'
+        self.update()
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+        p.setRenderHint(QPainter.SmoothPixmapTransform)
+
+        rect = QRectF(0, 0, self.W, self.H)
+        clip = QPainterPath()
+        clip.addRoundedRect(rect, self.R, self.R)
+        p.setClipPath(clip)
+
+        if self._pix:
+            scaled = self._pix.scaled(
+                self.W, self.H,
+                Qt.KeepAspectRatioByExpanding,
+                Qt.SmoothTransformation,
+            )
+            x = (self.W - scaled.width()) // 2
+            y = (self.H - scaled.height()) // 2
+            p.drawPixmap(x, y, scaled)
+
+            filled = self.W * self._pct / 100.0
+            if filled < self.W:
+                p.fillRect(
+                    QRectF(filled, 0, self.W - filled, self.H),
+                    QColor(6, 18, 24, 200),
+                )
+                if filled > 4:
+                    grad = QLinearGradient(
+                        QPointF(filled - 16, 0), QPointF(filled + 2, 0))
+                    grad.setColorAt(0, QColor(0, 0, 0, 0))
+                    grad.setColorAt(1, QColor(6, 18, 24, 200))
+                    p.fillRect(QRectF(filled - 16, 0, 18, self.H), grad)
+        else:
+            p.fillRect(rect, QColor('#061420'))
+            p.setPen(QColor('#1a3848'))
+            p.setFont(QFont('', 26))
+            p.drawText(rect, Qt.AlignCenter, self._placeholder_text)
+
+        p.end()
+
+
+# ── Workers ────────────────────────────────────────────────────────────────────
+
+class MetaWorker(QObject):
+    ready = pyqtSignal(dict)
+    failed = pyqtSignal(str)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            opts = {'quiet': True, 'no_warnings': True, 'extract_flat': 'in_playlist'}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(self.url, download=False)
+            if not info:
+                self.failed.emit('Could not fetch video info.')
+                return
+            if info.get('_type') == 'playlist':
+                entries = [e for e in (info.get('entries') or []) if e]
+                count = info.get('playlist_count') or len(entries)
+                first = entries[0] if entries else {}
+                thumb = (info.get('thumbnail') or first.get('thumbnail') or
+                         next((t['url'] for t in reversed(info.get('thumbnails') or [])
+                               if t.get('url')), ''))
+                self.ready.emit({
+                    'title': info.get('title', 'Playlist'),
+                    'channel': info.get('channel') or info.get('uploader', ''),
+                    'duration': 0,
+                    'thumbnail_url': thumb,
+                    'is_playlist': True,
+                    'count': count,
+                })
+            else:
+                thumbs = info.get('thumbnails') or []
+                thumb = (info.get('thumbnail') or
+                         next((t['url'] for t in reversed(thumbs) if t.get('url')), ''))
+                self.ready.emit({
+                    'title': info.get('title', ''),
+                    'channel': info.get('channel') or info.get('uploader', ''),
+                    'duration': info.get('duration', 0),
+                    'thumbnail_url': thumb,
+                    'is_playlist': False,
+                    'count': 1,
+                })
+        except Exception as exc:
+            self.failed.emit(str(exc).split('\n')[0][:120])
+
+
+class ThumbnailFetcher(QObject):
+    ready = pyqtSignal(bytes)
+
+    def __init__(self, url):
+        super().__init__()
+        self.url = url
+
+    def run(self):
+        try:
+            req = urllib.request.Request(
+                self.url, headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                self.ready.emit(r.read())
+        except Exception:
+            pass
 
 
 class DownloadWorker(QObject):
     progress = pyqtSignal(dict)
-    overall = pyqtSignal(int, int)     # completed, total
-    postprocess = pyqtSignal(str)      # status message, empty string = done
+    overall = pyqtSignal(int, int)
+    postprocess = pyqtSignal(str)
     finished = pyqtSignal()
     error = pyqtSignal(str)
     status = pyqtSignal(str)
@@ -77,15 +226,14 @@ class DownloadWorker(QObject):
         if self._cancel.is_set():
             return
         info = d.get('info_dict', {})
-        title = info.get('title', os.path.basename(info.get('filename', '')))
+        title = info.get('title', '')
         if d['status'] == 'started':
-            self.postprocess.emit(f"Converting: {title}…")
+            self.postprocess.emit(f'Converting: {title}…')
         elif d['status'] == 'finished':
             self.postprocess.emit('')
             with self._lock:
                 self._completed += 1
-                done = self._completed
-                total = self._total
+                done, total = self._completed, self._total
             if total:
                 self.overall.emit(done, total)
 
@@ -111,126 +259,150 @@ class DownloadWorker(QObject):
             'retries': 10,
             'fragment_retries': 10,
             'ignoreerrors': True,
-            'noplaylist': False,
             'quiet': True,
         }
         loc = get_ffmpeg_location()
         if loc:
             ydl_opts['ffmpeg_location'] = loc
         try:
-            self.status.emit(
-                f'Downloading as {self.audio_format.upper()} @ {self.audio_quality} kbps…')
+            self.status.emit('Starting…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([self.url])
             if self._cancel.is_set():
-                self.error.emit('Download cancelled.')
+                self.error.emit('cancelled')
             else:
                 self.finished.emit()
         except yt_dlp.utils.DownloadCancelled:
-            self.error.emit('Download cancelled.')
+            self.error.emit('cancelled')
         except Exception as exc:
-            self.error.emit(str(exc))
+            self.error.emit(str(exc).split('\n')[0][:200])
+
+
+# ── Main window ────────────────────────────────────────────────────────────────
+
+_ACCENT = '#06b6d4'
+_ACCENT_HOVER = '#22d3ee'
+_ACCENT_DIM = '#082830'
+_BG = '#08131a'
+_SURFACE = '#0d1f28'
+_CARD = '#101e2a'
+_BORDER = '#1a3040'
+_TEXT = '#dff4f8'
+_MUTED = '#4a7a8a'
+_SUCCESS = '#34d399'
+_ERROR = '#f87171'
+_WARN = '#fbbf24'
+
+_COMBO_SS = f"""
+    QComboBox {{
+        background: #0a1820;
+        border: 1px solid #1a3040;
+        border-radius: 7px;
+        padding: 5px 10px;
+        color: {_TEXT};
+        font-size: 12px;
+    }}
+    QComboBox::drop-down {{ border: none; width: 22px; }}
+    QComboBox QAbstractItemView {{
+        background: #0d1f28;
+        color: {_TEXT};
+        selection-background-color: {_ACCENT};
+        border: 1px solid #1a3040;
+    }}
+"""
 
 
 class YoutubeAudioDownloaderApp(QMainWindow):
 
-    _STYLESHEET = """
-        QMainWindow, QWidget#root { background-color: #0f1117; }
+    _SS = f"""
+        QMainWindow, QWidget#root {{ background: {_BG}; }}
 
-        QLabel#section { color: #9e9e9e; font-size: 11px; letter-spacing: 1px; margin-top: 4px; }
+        QLabel {{ color: {_TEXT}; }}
+        QLabel#muted {{ color: {_MUTED}; font-size: 11px; }}
+        QLabel#section {{
+            color: {_MUTED}; font-size: 10px;
+            letter-spacing: 1.5px; text-transform: uppercase;
+        }}
 
-        QLineEdit {
-            background-color: #1a1a2e;
-            border: 1px solid #2a2a3e;
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #f0f0f0;
+        QLineEdit {{
+            background: {_SURFACE};
+            border: 1.5px solid {_BORDER};
+            border-radius: 10px;
+            padding: 11px 14px;
+            color: {_TEXT};
             font-size: 14px;
-            selection-background-color: #00b0ff;
-        }
-        QLineEdit:focus { border-color: #00b0ff; }
+            selection-background-color: {_ACCENT};
+        }}
+        QLineEdit:focus {{ border-color: {_ACCENT}; }}
 
-        QComboBox {
-            background-color: #1a1a2e;
-            border: 1px solid #2a2a3e;
-            border-radius: 8px;
-            padding: 10px 14px;
-            color: #f0f0f0;
-            font-size: 14px;
-        }
-        QComboBox::drop-down { border: none; width: 28px; }
-        QComboBox QAbstractItemView {
-            background-color: #1a1a2e;
-            color: #f0f0f0;
-            selection-background-color: #00b0ff;
-            border: 1px solid #333;
-        }
-
-        QPushButton {
-            background-color: #1a1a2e;
-            border: 1px solid #2a2a3e;
-            border-radius: 8px;
+        QPushButton {{
+            background: {_SURFACE};
+            border: 1.5px solid {_BORDER};
+            border-radius: 10px;
             padding: 10px 18px;
-            color: #f0f0f0;
+            color: {_TEXT};
             font-size: 13px;
-        }
-        QPushButton:hover { background-color: #22223e; border-color: #444; }
-        QPushButton:pressed { background-color: #111; }
+        }}
+        QPushButton:hover {{ background: #112030; border-color: {_ACCENT}; }}
+        QPushButton:pressed {{ background: #080e14; }}
 
-        QPushButton#primary {
-            background-color: #00838f;
+        QPushButton#primary {{
+            background: {_ACCENT};
             border: none;
             color: #fff;
             font-size: 15px;
             font-weight: bold;
-            border-radius: 10px;
-            padding: 14px;
-        }
-        QPushButton#primary:hover { background-color: #00acc1; }
-        QPushButton#primary:pressed { background-color: #005662; }
-        QPushButton#primary:disabled { background-color: #0a2a2e; color: #444; }
+            border-radius: 12px;
+            padding: 15px;
+            letter-spacing: 0.5px;
+        }}
+        QPushButton#primary:hover {{ background: {_ACCENT_HOVER}; }}
+        QPushButton#primary:pressed {{ background: #0891b2; }}
+        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: #1a4050; }}
 
-        QPushButton#cancel {
-            background-color: #1a1a2e;
-            border: 1px solid #c62828;
-            color: #ff5252;
-            font-size: 15px;
+        QPushButton#cancel {{
+            background: transparent;
+            border: 1.5px solid #7f1d1d;
+            color: {_ERROR};
+            font-size: 14px;
             font-weight: bold;
-            border-radius: 10px;
-            padding: 14px;
-        }
-        QPushButton#cancel:hover { background-color: #2a1010; }
-        QPushButton#cancel:pressed { background-color: #111; }
+            border-radius: 12px;
+            padding: 13px;
+        }}
+        QPushButton#cancel:hover {{ background: #2a1010; border-color: {_ERROR}; }}
+        QPushButton#cancel:disabled {{ border-color: #333; color: #555; }}
 
-        QProgressBar {
-            background-color: #1a1a2e;
+        QProgressBar {{
+            background: {_SURFACE};
             border: none;
-            border-radius: 4px;
-            height: 6px;
-        }
-        QProgressBar::chunk { background-color: #00b0ff; border-radius: 4px; }
-        QProgressBar#overall::chunk { background-color: #00e676; border-radius: 4px; }
+            border-radius: 3px;
+            height: 5px;
+        }}
+        QProgressBar::chunk {{ background: {_ACCENT}; border-radius: 3px; }}
+        QProgressBar#overall::chunk {{ background: {_SUCCESS}; border-radius: 3px; }}
 
-        QTextEdit {
-            background-color: #0a0a12;
-            color: #9e9e9e;
-            border: 1px solid #1a1a2e;
-            border-radius: 8px;
-            padding: 10px;
-            font-family: monospace;
-            font-size: 12px;
-        }
-
-        QFrame#divider { background-color: #1e1e2e; max-height: 1px; }
+        QFrame#card {{
+            background: {_CARD};
+            border: 1px solid {_BORDER};
+            border-radius: 14px;
+        }}
+        QFrame#divider {{ background: {_BORDER}; max-height: 1px; }}
+        QFrame#card_div {{ background: {_BORDER}; max-height: 1px; }}
     """
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle('YouTube Audio Downloader')
-        self.setMinimumSize(640, 600)
-        self.resize(720, 700)
-        self.setStyleSheet(self._STYLESHEET)
-        self._log_lines = {}
+        self.setMinimumSize(660, 480)
+        self.resize(720, 560)
+        self.setWindowIcon(QIcon(resource_path('logo.png')))
+        self.setStyleSheet(self._SS)
+
+        self._meta = {}
+        self._fetch_timer = QTimer()
+        self._fetch_timer.setSingleShot(True)
+        self._fetch_timer.setInterval(1000)
+        self._fetch_timer.timeout.connect(self._fetch_metadata)
 
         if not check_ffmpeg_available():
             QMessageBox.warning(self, 'ffmpeg Not Found',
@@ -241,63 +413,158 @@ class YoutubeAudioDownloaderApp(QMainWindow):
 
         self._build_ui()
 
+    # ── UI construction ────────────────────────────────────────────────────────
+
     def _build_ui(self):
         root = QWidget()
         root.setObjectName('root')
         self.setCentralWidget(root)
-
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setContentsMargins(28, 20, 28, 24)
         layout.setSpacing(0)
 
-        # Header
-        header = QHBoxLayout()
-        title = QLabel('Audio Downloader')
-        title.setFont(QFont('', 20, QFont.Bold))
-        title.setStyleSheet('color: #ffffff;')
-        header.addWidget(title)
-        header.addStretch()
-        badge = QLabel(f'v{__version__}')
-        badge.setStyleSheet(
-            'background:#1a1a2e; color:#555; border-radius:4px;'
-            'padding:2px 8px; font-size:11px;')
-        header.addWidget(badge)
-        layout.addLayout(header)
-        layout.addSpacing(4)
+        # ── Logo banner ──────────────────────────────────────────────────────
+        logo_pix = QPixmap(resource_path('logo.png'))
+        logo_label = QLabel()
+        logo_label.setPixmap(
+            logo_pix.scaledToHeight(44, Qt.SmoothTransformation))
+        logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        sub = QLabel('Videos · Playlists · Channels')
-        sub.setStyleSheet('color: #555; font-size: 12px;')
-        layout.addWidget(sub)
-        layout.addSpacing(16)
+        ver = QLabel(f'v{__version__}')
+        ver.setObjectName('muted')
+        ver.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-        divider = QFrame()
-        divider.setObjectName('divider')
-        divider.setFixedHeight(1)
-        layout.addWidget(divider)
+        hdr = QHBoxLayout()
+        hdr.addWidget(logo_label)
+        hdr.addStretch()
+        hdr.addWidget(ver)
+        layout.addLayout(hdr)
+        layout.addSpacing(18)
+
+        div0 = QFrame(); div0.setObjectName('divider'); div0.setFixedHeight(1)
+        layout.addWidget(div0)
         layout.addSpacing(20)
 
-        # URL
-        layout.addWidget(self._lbl('URL'))
+        # ── URL input ────────────────────────────────────────────────────────
+        layout.addWidget(self._lbl('YouTube URL'))
         layout.addSpacing(6)
-        url_row = QHBoxLayout()
-        url_row.setSpacing(8)
+        url_row = QHBoxLayout(); url_row.setSpacing(8)
         self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText('Video, playlist or channel URL…')
-        self.url_input.setMinimumHeight(44)
+        self.url_input.setPlaceholderText('Paste a video, playlist, or channel URL…')
+        self.url_input.setMinimumHeight(46)
+        self.url_input.textChanged.connect(self._on_url_changed)
         url_row.addWidget(self.url_input)
         paste_btn = QPushButton('Paste')
-        paste_btn.setFixedSize(72, 44)
-        paste_btn.clicked.connect(
-            lambda: self.url_input.setText(QApplication.clipboard().text()))
+        paste_btn.setFixedSize(72, 46)
+        paste_btn.clicked.connect(self._paste_and_fetch)
         url_row.addWidget(paste_btn)
         layout.addLayout(url_row)
+        layout.addSpacing(14)
+
+        # ── Fetch / status message ───────────────────────────────────────────
+        self.status_label = QLabel('')
+        self.status_label.setObjectName('muted')
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.status_label.setFixedHeight(18)
+        layout.addWidget(self.status_label)
+        layout.addSpacing(8)
+
+        # ── Info card ────────────────────────────────────────────────────────
+        self.card = QFrame()
+        self.card.setObjectName('card')
+        self.card.hide()
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 120))
+        self.card.setGraphicsEffect(shadow)
+
+        card_layout = QHBoxLayout(self.card)
+        card_layout.setContentsMargins(14, 14, 20, 14)
+        card_layout.setSpacing(16)
+
+        self.thumb = _ThumbWidget()
+        card_layout.addWidget(self.thumb)
+
+        meta_col = QVBoxLayout()
+        meta_col.setSpacing(4)
+        meta_col.setContentsMargins(0, 2, 0, 2)
+
+        self.title_label = QLabel('')
+        self.title_label.setFont(QFont('', 14, QFont.Bold))
+        self.title_label.setWordWrap(False)
+        self.title_label.setStyleSheet(f'color: {_TEXT};')
+        meta_col.addWidget(self.title_label)
+
+        self.channel_label = QLabel('')
+        self.channel_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        meta_col.addWidget(self.channel_label)
+
+        self.meta_label = QLabel('')
+        self.meta_label.setStyleSheet(f'color: {_MUTED}; font-size: 12px;')
+        meta_col.addWidget(self.meta_label)
+
+        meta_col.addSpacing(6)
+
+        # Thin divider inside card
+        card_div = QFrame()
+        card_div.setObjectName('card_div')
+        card_div.setFixedHeight(1)
+        meta_col.addWidget(card_div)
+        meta_col.addSpacing(6)
+
+        # Format + bitrate row embedded in card
+        fmt_row = QHBoxLayout()
+        fmt_row.setSpacing(10)
+
+        fmt_lbl = QLabel('FORMAT')
+        fmt_lbl.setStyleSheet(
+            f'color: {_MUTED}; font-size: 9px; letter-spacing: 1.5px;')
+        fmt_row.addWidget(fmt_lbl)
+
+        self.fmt_combo = QComboBox()
+        self.fmt_combo.addItems(['mp3', 'aac', 'm4a', 'opus', 'flac', 'wav'])
+        self.fmt_combo.setFixedHeight(32)
+        self.fmt_combo.setStyleSheet(_COMBO_SS)
+        fmt_row.addWidget(self.fmt_combo)
+
+        fmt_row.addSpacing(8)
+
+        br_lbl = QLabel('BITRATE')
+        br_lbl.setStyleSheet(
+            f'color: {_MUTED}; font-size: 9px; letter-spacing: 1.5px;')
+        fmt_row.addWidget(br_lbl)
+
+        self.bitrate_combo = QComboBox()
+        self.bitrate_combo.addItems([f'{b} kbps' for b in _BITRATES])
+        self.bitrate_combo.setFixedHeight(32)
+        self.bitrate_combo.setStyleSheet(_COMBO_SS)
+        fmt_row.addWidget(self.bitrate_combo)
+
+        fmt_row.addStretch()
+        meta_col.addLayout(fmt_row)
+
+        meta_col.addStretch()
+
+        # Speed / ETA (shown during download)
+        self.speed_label = QLabel('')
+        self.speed_label.setStyleSheet(
+            f'color: {_ACCENT}; font-size: 12px; font-weight: bold;')
+        meta_col.addWidget(self.speed_label)
+
+        card_layout.addLayout(meta_col)
+        layout.addWidget(self.card)
         layout.addSpacing(16)
 
-        # Save folder
-        layout.addWidget(self._lbl('Save to'))
-        layout.addSpacing(6)
-        save_row = QHBoxLayout()
-        save_row.setSpacing(8)
+        # ── Controls (save path only) ─────────────────────────────────────────
+        self.controls = QWidget()
+        ctrl_layout = QVBoxLayout(self.controls)
+        ctrl_layout.setContentsMargins(0, 0, 0, 0)
+        ctrl_layout.setSpacing(10)
+
+        ctrl_layout.addWidget(self._lbl('Save to'))
+        save_row = QHBoxLayout(); save_row.setSpacing(8)
         self.save_input = QLineEdit(str(Path.home() / 'Downloads'))
         self.save_input.setMinimumHeight(44)
         save_row.addWidget(self.save_input)
@@ -305,139 +572,204 @@ class YoutubeAudioDownloaderApp(QMainWindow):
         browse_btn.setFixedSize(80, 44)
         browse_btn.clicked.connect(self._browse)
         save_row.addWidget(browse_btn)
-        layout.addLayout(save_row)
+        ctrl_layout.addLayout(save_row)
+
+        self.controls.hide()
+        layout.addWidget(self.controls)
         layout.addSpacing(16)
 
-        # Format + Bitrate on same row
-        fq_row = QHBoxLayout()
-        fq_row.setSpacing(12)
-
-        fmt_col = QVBoxLayout()
-        fmt_col.setSpacing(6)
-        fmt_col.addWidget(self._lbl('Format'))
-        self.format_combo = QComboBox()
-        self.format_combo.addItems(['mp3', 'aac', 'm4a', 'opus', 'flac', 'wav'])
-        self.format_combo.setMinimumHeight(44)
-        fmt_col.addWidget(self.format_combo)
-        fq_row.addLayout(fmt_col)
-
-        qual_col = QVBoxLayout()
-        qual_col.setSpacing(6)
-        qual_col.addWidget(self._lbl('Bitrate'))
-        self.quality_combo = QComboBox()
-        self.quality_combo.addItems([f'{b} kbps' for b in _BITRATES])
-        self.quality_combo.setMinimumHeight(44)
-        qual_col.addWidget(self.quality_combo)
-        fq_row.addLayout(qual_col)
-
-        layout.addLayout(fq_row)
-        layout.addSpacing(20)
-
-        # Download / Cancel button
-        self.dl_btn = QPushButton('Download')
+        # ── Download button ──────────────────────────────────────────────────
+        self.dl_btn = QPushButton('Download Audio')
         self.dl_btn.setObjectName('primary')
-        self.dl_btn.setMinimumHeight(52)
+        self.dl_btn.setMinimumHeight(54)
         self.dl_btn.clicked.connect(self._start_download)
+        self.dl_btn.hide()
         layout.addWidget(self.dl_btn)
-        layout.addSpacing(16)
 
-        # Per-file progress bar
+        # ── Cancel button ────────────────────────────────────────────────────
+        self.cancel_btn = QPushButton('✕  Cancel Download')
+        self.cancel_btn.setObjectName('cancel')
+        self.cancel_btn.setMinimumHeight(50)
+        self.cancel_btn.clicked.connect(self._cancel_download)
+        self.cancel_btn.hide()
+        layout.addWidget(self.cancel_btn)
+        layout.addSpacing(14)
+
+        # ── Progress section ─────────────────────────────────────────────────
+        self.progress_widget = QWidget()
+        prog_layout = QVBoxLayout(self.progress_widget)
+        prog_layout.setContentsMargins(0, 0, 0, 0)
+        prog_layout.setSpacing(6)
+
+        self.pct_big = QLabel('0%')
+        self.pct_big.setAlignment(Qt.AlignCenter)
+        self.pct_big.setFont(QFont('', 52, QFont.Bold))
+        self.pct_big.setStyleSheet(f'color: {_ACCENT};')
+        prog_layout.addWidget(self.pct_big)
+
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
-        self.progress_bar.setFixedHeight(6)
-        layout.addWidget(self.progress_bar)
-        layout.addSpacing(6)
+        self.progress_bar.setFixedHeight(5)
+        prog_layout.addWidget(self.progress_bar)
 
-        stats_row = QHBoxLayout()
-        self.status_label = QLabel('Ready')
-        self.status_label.setStyleSheet('color: #555; font-size: 12px;')
-        stats_row.addWidget(self.status_label)
-        stats_row.addStretch()
-        self.pct_label = QLabel('')
-        self.pct_label.setStyleSheet('color: #555; font-size: 12px;')
-        stats_row.addWidget(self.pct_label)
-        layout.addLayout(stats_row)
-        layout.addSpacing(8)
-
-        # Overall playlist progress (hidden for single-video downloads)
         self.overall_bar = QProgressBar()
         self.overall_bar.setObjectName('overall')
         self.overall_bar.setValue(0)
         self.overall_bar.setTextVisible(False)
-        self.overall_bar.setFixedHeight(4)
+        self.overall_bar.setFixedHeight(3)
         self.overall_bar.hide()
-        layout.addWidget(self.overall_bar)
-        layout.addSpacing(4)
+        prog_layout.addWidget(self.overall_bar)
 
-        overall_row = QHBoxLayout()
         self.overall_label = QLabel('')
-        self.overall_label.setStyleSheet('color: #00e676; font-size: 11px;')
+        self.overall_label.setAlignment(Qt.AlignCenter)
+        self.overall_label.setStyleSheet(f'color: {_SUCCESS}; font-size: 11px;')
         self.overall_label.hide()
-        overall_row.addWidget(self.overall_label)
-        layout.addLayout(overall_row)
-        layout.addSpacing(8)
+        prog_layout.addWidget(self.overall_label)
 
-        # Log — expands with window
-        self.log_text = QTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        layout.addWidget(self.log_text)
+        self.progress_widget.hide()
+        layout.addWidget(self.progress_widget)
+
+        layout.addStretch()
 
     def _lbl(self, text):
-        lbl = QLabel(text.upper())
-        lbl.setObjectName('section')
-        return lbl
+        l = QLabel(text.upper())
+        l.setObjectName('section')
+        return l
+
+    # ── State management ───────────────────────────────────────────────────────
+
+    def _set_idle(self):
+        self.card.hide()
+        self.controls.hide()
+        self.dl_btn.hide()
+        self.cancel_btn.hide()
+        self.progress_widget.hide()
+        self.overall_bar.hide()
+        self.overall_label.hide()
+        self._set_status('')
+
+    def _set_fetching(self):
+        self.card.hide()
+        self.controls.hide()
+        self.dl_btn.hide()
+        self.cancel_btn.hide()
+        self.progress_widget.hide()
+        self._set_status('Fetching video info…', _MUTED)
+
+    def _set_ready(self, meta: dict):
+        self._meta = meta
+        t = meta['title']
+        self.title_label.setText(t if len(t) <= 52 else t[:50] + '…')
+        self.channel_label.setText(meta.get('channel', ''))
+        parts = []
+        dur = _fmt_dur(meta.get('duration', 0))
+        if dur:
+            parts.append(dur)
+        if meta.get('is_playlist'):
+            parts.append(f"{meta['count']} tracks")
+        self.meta_label.setText('  ·  '.join(parts))
+        self.thumb.reset()
+        self.thumb.setPlaceholderText('⏳')
+        self.card.show()
+        self.controls.show()
+        self.dl_btn.show()
+        self.cancel_btn.hide()
+        self.progress_widget.hide()
+        self._set_status('Ready to download', _SUCCESS)
+
+    def _set_downloading(self):
+        self.controls.hide()
+        self.dl_btn.hide()
+        self.cancel_btn.show()
+        self.cancel_btn.setEnabled(True)
+        self.progress_widget.show()
+        self.thumb.setProgress(0)
+        self.pct_big.setText('0%')
+        self.pct_big.setStyleSheet(f'color: {_ACCENT};')
+        self.progress_bar.setValue(0)
+        self.speed_label.setText('')
+
+    def _set_status(self, text: str, color: str = _MUTED):
+        self.status_label.setText(text)
+        self.status_label.setStyleSheet(f'color: {color}; font-size: 11px;')
+
+    # ── URL handling & metadata fetch ──────────────────────────────────────────
+
+    def _on_url_changed(self, text: str):
+        text = text.strip()
+        if text.startswith(('http://', 'https://')):
+            self._fetch_timer.start()
+            self._set_fetching()
+        else:
+            self._fetch_timer.stop()
+            self._set_idle()
+
+    def _paste_and_fetch(self):
+        self.url_input.setText(QApplication.clipboard().text())
+
+    def _fetch_metadata(self):
+        url = self.url_input.text().strip()
+        if not url.startswith(('http://', 'https://')):
+            return
+        self._set_fetching()
+        self._meta_thread = QThread()
+        self._meta_worker = MetaWorker(url)
+        self._meta_worker.moveToThread(self._meta_thread)
+        self._meta_thread.started.connect(self._meta_worker.run)
+        self._meta_worker.ready.connect(self._on_meta_ready)
+        self._meta_worker.failed.connect(self._on_meta_failed)
+        self._meta_worker.ready.connect(self._meta_thread.quit)
+        self._meta_worker.failed.connect(self._meta_thread.quit)
+        self._meta_thread.finished.connect(self._meta_thread.deleteLater)
+        self._meta_thread.start()
+
+    def _on_meta_ready(self, meta: dict):
+        self._set_ready(meta)
+        thumb_url = meta.get('thumbnail_url', '')
+        if thumb_url:
+            self._thumb_thread = QThread()
+            self._thumb_worker = ThumbnailFetcher(thumb_url)
+            self._thumb_worker.moveToThread(self._thumb_thread)
+            self._thumb_thread.started.connect(self._thumb_worker.run)
+            self._thumb_worker.ready.connect(self._on_thumb_ready)
+            self._thumb_worker.ready.connect(self._thumb_thread.quit)
+            self._thumb_thread.finished.connect(self._thumb_thread.deleteLater)
+            self._thumb_thread.start()
+
+    def _on_meta_failed(self, msg: str):
+        self._set_status(f'⚠  {msg}', _ERROR)
+        self.card.hide()
+        self.controls.hide()
+        self.dl_btn.hide()
+
+    def _on_thumb_ready(self, data: bytes):
+        pix = QPixmap()
+        pix.loadFromData(data)
+        if not pix.isNull():
+            self.thumb.setPixmap(pix)
+
+    # ── Download ───────────────────────────────────────────────────────────────
 
     def _browse(self):
-        d = QFileDialog.getExistingDirectory(self, 'Select folder', self.save_input.text())
+        d = QFileDialog.getExistingDirectory(
+            self, 'Select folder', self.save_input.text())
         if d:
             self.save_input.setText(d)
 
-    def _validate_url(self, url):
-        if not url.startswith(('http://', 'https://')):
-            self.log_text.append('⚠  Please enter a valid URL (must start with http:// or https://)')
-            return False
-        return True
-
     def _selected_bitrate(self):
-        return self.quality_combo.currentText().split()[0]
+        return self.bitrate_combo.currentText().split()[0]
 
     def _start_download(self):
         url = self.url_input.text().strip()
-        if not url:
-            self.log_text.append('⚠  Please enter a URL.')
+        if not url or not self._meta:
             return
-        if not self._validate_url(url):
-            return
-
-        fmt = self.format_combo.currentText()
+        self._set_downloading()
+        fmt = self.fmt_combo.currentText()
         qual = self._selected_bitrate()
-        self._log_lines.clear()
-
-        self.dl_btn.setObjectName('cancel')
-        self.dl_btn.style().unpolish(self.dl_btn)
-        self.dl_btn.style().polish(self.dl_btn)
-        self.dl_btn.setText('Cancel')
-        self.dl_btn.clicked.disconnect()
-        self.dl_btn.clicked.connect(self._cancel_download)
-
-        self.progress_bar.setValue(0)
-        self.pct_label.setText('')
-        self.overall_bar.setValue(0)
-        self.overall_bar.hide()
-        self.overall_label.hide()
-        self.overall_label.setText('')
-        self.status_label.setText('Starting…')
-        self.status_label.setStyleSheet('color: #00b0ff; font-size: 12px;')
-        self.log_text.clear()
-        self.log_text.append(
-            f'Format: {fmt.upper()}  ·  {qual} kbps')
-        self.log_text.append(
-            '↺  Downloads already in archive will be skipped automatically.')
-
         self.thread = QThread()
-        self.worker = DownloadWorker(url, self.save_input.text(), fmt, qual)
+        self.worker = DownloadWorker(
+            url, self.save_input.text(), fmt, qual)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)
@@ -445,115 +777,68 @@ class YoutubeAudioDownloaderApp(QMainWindow):
         self.worker.progress.connect(self._on_progress)
         self.worker.overall.connect(self._on_overall)
         self.worker.postprocess.connect(self._on_postprocess)
-        self.worker.status.connect(self.status_label.setText)
+        self.worker.status.connect(lambda s: self._set_status(s, _ACCENT))
         self.thread.start()
 
     def _cancel_download(self):
         if hasattr(self, 'worker'):
             self.worker.cancel()
-        self.dl_btn.setEnabled(False)
-        self.status_label.setText('Cancelling…')
-        self.status_label.setStyleSheet('color: #ffa000; font-size: 12px;')
+        self.cancel_btn.setEnabled(False)
+        self._set_status('Cancelling…', _WARN)
 
-    def _on_postprocess(self, msg):
-        if msg:
-            self.status_label.setText(msg)
-            self.status_label.setStyleSheet('color: #ffa000; font-size: 12px;')
+    def _on_progress(self, d: dict):
+        pct = d['percent']
+        ipct = int(pct)
+        self.progress_bar.setValue(ipct)
+        self.pct_big.setText(f'{ipct}%')
+        self.thumb.setProgress(pct)
+
+        speed = d['speed']
+        eta = d['eta']
+        idx = d.get('playlist_index')
+        count = d.get('playlist_count')
+
+        if idx and count:
+            self.speed_label.setText(
+                f'{idx}/{count}  ·  {speed:.1f} MB/s  ·  ETA {eta}s')
         else:
-            self.status_label.setStyleSheet('color: #00b0ff; font-size: 12px;')
+            self.speed_label.setText(f'{speed:.1f} MB/s  ·  ETA {eta}s')
 
-    def _on_overall(self, done, total):
+    def _on_postprocess(self, msg: str):
+        if msg:
+            self._set_status(msg, _WARN)
+        else:
+            self._set_status('Converting…', _ACCENT)
+
+    def _on_overall(self, done: int, total: int):
         self.overall_bar.setMaximum(total)
         self.overall_bar.setValue(done)
         self.overall_bar.show()
         self.overall_label.setText(f'Completed {done} of {total}')
         self.overall_label.show()
 
-    def _prune_log(self):
-        doc = self.log_text.document()
-        if doc.blockCount() <= _LOG_LIMIT:
-            return
-        cursor = QTextCursor(doc)
-        cursor.movePosition(QTextCursor.Start)
-        cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-        cursor.movePosition(QTextCursor.Right, QTextCursor.KeepAnchor)
-        cursor.removeSelectedText()
-        self._log_lines = {
-            k: v - 1 for k, v in self._log_lines.items() if v > 0
-        }
-
-    def _on_progress(self, d):
-        pct = int(d['percent'])
-        self.progress_bar.setValue(pct)
-        self.pct_label.setText(f'{pct}%')
-
-        idx = d.get('playlist_index')
-        count = d.get('playlist_count')
-        playlist_info = f'  [{idx}/{count}]' if idx and count else ''
-
-        name = os.path.basename(d['filename']) if d['filename'] else ''
-        if not name:
-            return
-
-        speed = d['speed']
-        eta = d['eta']
-        line = f"{name}{playlist_info}  {pct}%  {speed:.1f} MB/s  ETA {eta}s"
-
-        if name in self._log_lines:
-            doc = self.log_text.document()
-            block = doc.findBlockByNumber(self._log_lines[name])
-            cursor = QTextCursor(block)
-            cursor.movePosition(QTextCursor.EndOfBlock, QTextCursor.KeepAnchor)
-            cursor.insertText(line)
-        else:
-            self._prune_log()
-            self.log_text.append(line)
-            self._log_lines[name] = self.log_text.document().blockCount() - 1
-
-        if idx and count:
-            self.status_label.setText(
-                f'Downloading {idx} of {count}  ·  {speed:.1f} MB/s  ETA {eta}s')
-            self.status_label.setStyleSheet('color: #00b0ff; font-size: 12px;')
-        else:
-            self.status_label.setText(f'{speed:.1f} MB/s  ·  ETA {eta}s')
-            self.status_label.setStyleSheet('color: #00b0ff; font-size: 12px;')
-
-    def _reset_dl_btn(self):
-        self.dl_btn.setObjectName('primary')
-        self.dl_btn.style().unpolish(self.dl_btn)
-        self.dl_btn.style().polish(self.dl_btn)
-        self.dl_btn.setEnabled(True)
-        self.dl_btn.setText('Download')
-        try:
-            self.dl_btn.clicked.disconnect()
-        except TypeError:
-            pass
-        self.dl_btn.clicked.connect(self._start_download)
-
     def _on_done(self):
-        self.thread.quit()
-        self.thread.wait()
-        self._reset_dl_btn()
+        self.thread.quit(); self.thread.wait()
+        self.thumb.setProgress(100)
         self.progress_bar.setValue(100)
-        self.pct_label.setText('100%')
-        self.status_label.setText('Done ✓')
-        self.status_label.setStyleSheet('color: #00e676; font-size: 12px;')
-        self.log_text.append('✓  All downloads complete')
+        self.pct_big.setText('✓')
+        self.pct_big.setStyleSheet(f'color: {_SUCCESS};')
+        self.speed_label.setText('')
+        self.cancel_btn.hide()
+        self.controls.show()
+        self.dl_btn.show()
+        self._set_status('Download complete', _SUCCESS)
 
-    def _on_error(self, msg):
-        self.thread.quit()
-        self.thread.wait()
-        self._reset_dl_btn()
-        self.progress_bar.setValue(0)
-        self.pct_label.setText('')
+    def _on_error(self, msg: str):
+        self.thread.quit(); self.thread.wait()
+        self.cancel_btn.hide()
+        self.controls.show()
+        self.dl_btn.show()
+        self.progress_widget.hide()
         if 'cancelled' in msg.lower():
-            self.status_label.setText('Cancelled')
-            self.status_label.setStyleSheet('color: #ffa000; font-size: 12px;')
-            self.log_text.append('⊘  Download cancelled')
+            self._set_status('Download cancelled', _WARN)
         else:
-            self.status_label.setText('Failed')
-            self.status_label.setStyleSheet('color: #ff5252; font-size: 12px;')
-            self.log_text.append(f'✗  {msg}')
+            self._set_status(f'✗  {msg}', _ERROR)
 
 
 if __name__ == '__main__':
