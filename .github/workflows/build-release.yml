@@ -64,6 +64,11 @@ jobs:
         if: runner.os == 'Windows'
         run: choco install nsis --no-progress -y
 
+      - name: Exclude dist from Windows Defender (prevents quarantine of built EXEs)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Add-MpPreference -ExclusionPath "${{ github.workspace }}\dist"
+
       # ── macOS icon (sips is built-in, no deps needed) ─────────────────────
       - name: Create macOS icon (logo.icns)
         if: runner.os == 'macOS'

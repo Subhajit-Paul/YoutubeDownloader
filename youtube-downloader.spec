@@ -41,7 +41,7 @@ if sys.platform == 'darwin':
         name='youtube-downloader',
         debug=False,
         strip=False,
-        upx=True,
+        upx=False,
         console=False,
         argv_emulation=True,
         icon='logo.icns' if os.path.exists('logo.icns') else None,
@@ -51,7 +51,7 @@ if sys.platform == 'darwin':
         a.binaries,
         a.datas,
         strip=False,
-        upx=True,
+        upx=False,
         name='youtube-downloader',
     )
     app = BUNDLE(
@@ -75,7 +75,7 @@ else:
         debug=False,
         bootloader_ignore_signals=False,
         strip=False,
-        upx=True,
+        upx=False,
         upx_exclude=[],
         runtime_tmpdir=None,
         console=False,
