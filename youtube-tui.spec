@@ -2,7 +2,7 @@
 import os
 import shutil
 import sys
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
 
 ffmpeg_binaries = []
 if sys.platform == "win32":
@@ -14,15 +14,16 @@ else:
     elif sys.platform == "darwin" and shutil.which("ffmpeg"):
         ffmpeg_binaries.append((shutil.which("ffmpeg"), "."))
 
+_textual_datas, _textual_bins, _textual_hidden = collect_all("textual")
+_rich_datas, _rich_bins, _rich_hidden = collect_all("rich")
+
 a = Analysis(
     ["ytd_tui.py"],
     pathex=[],
-    binaries=ffmpeg_binaries,
-    datas=(
-        collect_data_files("textual") +
-        collect_data_files("rich")
-    ),
+    binaries=ffmpeg_binaries + _textual_bins + _rich_bins,
+    datas=_textual_datas + _rich_datas + collect_data_files("textual", include_py_files=False),
     hiddenimports=(
+        _textual_hidden + _rich_hidden +
         collect_submodules("textual") +
         ["common", "version", "updater", "dep_check"]
     ),
@@ -45,7 +46,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,

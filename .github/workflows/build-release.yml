@@ -126,33 +126,32 @@ jobs:
       - name: Build TUI downloader
         run: pyinstaller youtube-tui.spec --noconfirm
 
-      # ── Linux: .deb packages ───────────────────────────────────────────────
-      - name: Create .deb packages (Linux)
+      # ── Linux: .deb for GUI apps; tar.gz binary for TUI ───────────────────
+      - name: Create Linux packages
         if: runner.os == 'Linux'
         run: |
           chmod +x packaging/linux/make-deb.sh
           VERSION=${{ steps.version.outputs.version }}
           bash packaging/linux/make-deb.sh youtube-downloader       "YouTube Downloader"       "$VERSION"
           bash packaging/linux/make-deb.sh youtube-audio-downloader "YouTube Audio Downloader" "$VERSION"
-          bash packaging/linux/make-deb.sh youtube-tui              "YouTube Downloader TUI"   "$VERSION" \
-            "Terminal UI downloader for YouTube videos and audio using yt-dlp."
           mkdir -p release
           mv "youtube-downloader_${VERSION}_amd64.deb" \
              "release/youtube-downloader-linux-x86_64.deb"
           mv "youtube-audio-downloader_${VERSION}_amd64.deb" \
              "release/youtube-audio-downloader-linux-x86_64.deb"
-          mv "youtube-tui_${VERSION}_amd64.deb" \
-             "release/youtube-tui-linux-x86_64.deb"
+          tar -czf "release/youtube-tui-linux-x86_64.tar.gz" \
+            -C dist youtube-tui
 
-      # ── Windows: NSIS installers ────────────────────────────────────────────
-      - name: Create NSIS installers (Windows)
+      # ── Windows: NSIS installers for GUI apps; raw .exe for TUI ───────────
+      - name: Create Windows packages
         if: runner.os == 'Windows'
-        shell: cmd
+        shell: pwsh
         run: |
-          mkdir release
+          $env:PATH += ";C:\Program Files (x86)\NSIS"
+          New-Item -ItemType Directory -Force -Path release | Out-Null
           makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
           makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
-          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-tui.nsi
+          Copy-Item "dist\youtube-tui.exe" "release\youtube-tui-windows-x86_64.exe"
 
       # ── macOS: DMG ─────────────────────────────────────────────────────────
       - name: Create DMG packages (macOS)
