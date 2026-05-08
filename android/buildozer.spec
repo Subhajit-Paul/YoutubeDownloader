@@ -4,7 +4,7 @@ package.name = youtubedownloader
 package.domain = com.subhajitpaul
 source.dir = .
 source.include_exts = py,kv
-version = 1.0.0
+version = 1.1.1
 
 requirements = python3,kivy==2.3.0,yt_dlp,certifi,websockets,brotli,mutagen
 
