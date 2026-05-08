@@ -1,100 +1,172 @@
 # YouTube Downloader
 
-A simple desktop application for downloading YouTube videos and audio.
+[![Desktop Build](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-release.yml/badge.svg)](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-release.yml)
+[![Android Build](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-android.yml/badge.svg)](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-android.yml)
+[![Latest Release](https://img.shields.io/github/v/release/Subhajit-Paul/YoutubeDownloader?label=latest)](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey)
+
+Three ways to download from YouTube — a GUI video app, a GUI audio app, and a terminal binary you put on your PATH.
+
+| App | Best for | Formats |
+|-----|----------|---------|
+| **YouTube Downloader** (GUI) | Casual video downloads | MP4 — Best / 1080p / 720p / 480p |
+| **YouTube Audio Downloader** (GUI) | Extracting audio | MP3, M4A, OPUS, FLAC, WAV |
+| **youtube-tui** (terminal) | Scripting, SSH, power users | MP4 + all audio formats |
+| **Android APK** | Mobile | MP4 + MP3, M4A, OPUS, FLAC |
+
+---
+
+## Install
+
+### TUI — one-line install (Linux & macOS)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Subhajit-Paul/YoutubeDownloader/main/install-tui.sh | bash
+```
+
+Installs to `~/.local/bin/youtube-tui`. Add an alias in your shell rc:
+
+```bash
+alias ytd='youtube-tui'
+```
+
+**Windows** — download `youtube-tui-windows-x86_64.exe` from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest), rename it, and add the folder to your PATH.
+
+---
+
+### GUI apps — Linux
+
+```bash
+# Video downloader
+wget https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest/download/youtube-downloader-linux-x86_64.deb
+sudo dpkg -i youtube-downloader-linux-x86_64.deb
+
+# Audio downloader
+wget https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest/download/youtube-audio-downloader-linux-x86_64.deb
+sudo dpkg -i youtube-audio-downloader-linux-x86_64.deb
+```
+
+### GUI apps — Windows
+
+Download the NSIS setup installers from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest):
+
+- `youtube-downloader-windows-x86_64-setup.exe`
+- `youtube-audio-downloader-windows-x86_64-setup.exe`
+
+### GUI apps — macOS
+
+Download the DMG files from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest):
+
+- `youtube-downloader-macos-arm64.dmg` (Apple Silicon)
+- `youtube-downloader-macos-x86_64.dmg` (Intel)
+- Same for `youtube-audio-downloader-*`
+
+### Android
+
+Download `youtubedownloader-*-debug.apk` from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest). Enable *Install from unknown sources* on your device before installing.
+
+---
 
 ## Features
 
-- Download YouTube videos in various resolutions
-- Extract audio from YouTube videos
-- Simple and intuitive user interface
-- Cross-platform compatibility
+### All apps
+- **Resumable downloads** — a per-directory `.ytdl-archive` skips already-downloaded videos on restart; interrupted mid-file downloads continue from where they left off
+- **Parallel fragment downloads** — YouTube DASH segments fetched concurrently (default 4–8 threads) for 2–4× speed on fast connections
+- **Playlist support** — videos saved into `<PlaylistTitle>/` subdirectories automatically; single videos stay flat
+- **Automatic retries** — 10 retries on transient network errors before failing a video
+- **Post-processor status** — "Converting: title…" shown while ffmpeg runs so the UI doesn't appear frozen
 
-## Download
+### GUI apps (Desktop)
+- Thumbnail preview card with left-to-right download-wipe reveal effect
+- Metadata and thumbnail fetched automatically on URL paste
+- Cancel button — turns red while active, amber "Cancelled" on stop
+- **Advanced panel** (hidden by default) — concurrent fragments, buffer size, HTTP chunk size, socket timeout, optional aria2c external downloader
+- **Browser cookie support** — Chrome, Firefox, Brave, Safari, Opera, Edge, Chromium, Vivaldi
+- Startup dependency checker with per-dep install commands
+- Background auto-update checker
 
-Download the latest release for your platform:
-- [Linux](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/download/v1.0.0/youtube-downloader)
-- [All Releases](https://github.com/Subhajit-Paul/youtube-downloader/releases)
+### TUI (`youtube-tui`)
+- Keyboard + mouse via [Textual](https://github.com/Textualize/textual)
+- Video and audio in one binary — toggle with Radio buttons
+- Real-time per-file progress bar and playlist progress bar
+- Log panel hidden by default — `Ctrl+L` to toggle
+- Advanced options panel — `Ctrl+A` to toggle
+- Key bindings: `Ctrl+D` download · `Ctrl+X` cancel · `Ctrl+L` log · `Ctrl+A` advanced · `Ctrl+Q` quit
 
-## Prerequisites
+---
 
-This application requires FFmpeg to be installed on your system.
+## Requirements
 
-### Installing FFmpeg
+FFmpeg is required for video merging and audio extraction. The bundled binaries include ffmpeg — no separate install needed. If running from source:
 
-#### Windows
-1. Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html)
-2. Extract the downloaded file
-3. Add the bin folder to your system PATH
+| Platform | Command |
+|----------|---------|
+| Ubuntu/Debian | `sudo apt install ffmpeg` |
+| Fedora | `sudo dnf install ffmpeg` |
+| macOS | `brew install ffmpeg` |
+| Windows | `winget install ffmpeg` or `choco install ffmpeg` |
 
-Or using Chocolatey:
+---
+
+## Build
+
+CI runs on every tag push via GitHub Actions across five platform targets:
+
+| Platform | Runner | GUI artifacts | TUI artifact |
+|----------|--------|---------------|--------------|
+| Linux x86_64 | `ubuntu-latest` | `.deb` × 2 | `tar.gz` binary |
+| Windows x86_64 | `windows-latest` | NSIS `.exe` × 2 | raw `.exe` |
+| macOS arm64 | `macos-14` | `.dmg` × 2 | `tar.gz` binary |
+| macOS x86_64 | `macos-13` | `.dmg` × 2 | `tar.gz` binary |
+| Android | `ubuntu-22.04` | — | `.apk` |
+
+All five publish to the same GitHub Release for each version tag.
+
+### Build locally
+
+```bash
+git clone https://github.com/Subhajit-Paul/YoutubeDownloader
+cd YoutubeDownloader
+
+pip install -r requirements-build.txt
+
+# GUI apps (produce dist/youtube-downloader and dist/youtube-audio-downloader)
+pyinstaller youtube-downloader.spec --noconfirm
+pyinstaller youtube-audio-downloader.spec --noconfirm
+
+# TUI binary (produces dist/youtube-tui)
+pyinstaller youtube-tui.spec --noconfirm
 ```
-choco install ffmpeg
-```
 
-#### macOS
-Using Homebrew:
-```
-brew install ffmpeg
-```
+---
 
-#### Linux (Ubuntu/Debian)
-```
-sudo apt update
-sudo apt install ffmpeg
-```
+## Development
 
-#### Linux (Fedora)
-```
-sudo dnf install ffmpeg
-```
+```bash
+git clone https://github.com/Subhajit-Paul/YoutubeDownloader
+cd YoutubeDownloader
 
-## Development Setup
+python -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-### Clone the repository
-```
-git clone https://github.com/Subhajit-Paul/youtube-downloader.git
-cd youtube-downloader
-```
-
-### Create and activate a virtual environment
-```
-# Windows
-python -m venv venv
-venv\Scripts\activate
-
-# macOS/Linux
-python3 -m venv venv
-source venv/bin/activate
-```
-
-### Install dependencies
-```
 pip install -r requirements.txt
+
+python ytd.py          # video GUI
+python ytd_audio.py    # audio GUI
+python ytd_tui.py      # TUI
 ```
 
-## Building the Application
+**Running on Android** — edit `android/main.py`, then build the APK:
 
-To create a standalone executable:
-
+```bash
+pip install buildozer==1.5.0 cython==3.0.11
+cd android
+buildozer android debug
 ```
-pyinstaller --noconsole --onefile --windowed --add-data "logo.png:." --name=youtube-downloader --icon=logo.png ytd.py
-```
 
-After the build process completes, you can find the executable in the `dist` folder.
-
-## Usage
-
-1. Launch the application
-2. Enter a YouTube URL in the input field
-3. Select your preferred download option (video or audio)
-4. Choose the quality/resolution
-5. Click the download button
-6. Wait for the download to complete
+---
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
-
-## Acknowledgments
-
-- [FFmpeg](https://ffmpeg.org/) for media processing
+[MIT](LICENSE)
