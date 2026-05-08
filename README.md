@@ -58,9 +58,10 @@ Download the NSIS setup installers from [Releases](https://github.com/Subhajit-P
 
 Download the DMG files from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest):
 
-- `youtube-downloader-macos-arm64.dmg` (Apple Silicon)
-- `youtube-downloader-macos-x86_64.dmg` (Intel)
-- Same for `youtube-audio-downloader-*`
+- `youtube-downloader-macos-arm64.dmg`
+- `youtube-audio-downloader-macos-arm64.dmg`
+
+> **Intel Mac?** The ARM64 binary runs transparently via Rosetta 2 — no separate Intel build is needed.
 
 ### Android
 
@@ -118,7 +119,6 @@ CI runs on every tag push via GitHub Actions across five platform targets:
 | Linux x86_64 | `ubuntu-latest` | `.deb` × 2 | `tar.gz` binary |
 | Windows x86_64 | `windows-latest` | NSIS `.exe` × 2 | raw `.exe` |
 | macOS arm64 | `macos-14` | `.dmg` × 2 | `tar.gz` binary |
-| macOS x86_64 | `macos-13` | `.dmg` × 2 | `tar.gz` binary |
 | Android | `ubuntu-22.04` | — | `.apk` |
 
 All five publish to the same GitHub Release for each version tag.

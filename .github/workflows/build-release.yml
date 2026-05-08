@@ -25,9 +25,6 @@ jobs:
           - os: windows-latest
             platform: windows
             artifact_suffix: windows-x86_64
-          - os: macos-13
-            platform: macos
-            artifact_suffix: macos-x86_64
           - os: macos-14
             platform: macos
             artifact_suffix: macos-arm64
