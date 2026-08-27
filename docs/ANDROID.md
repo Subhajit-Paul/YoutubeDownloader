@@ -1,45 +1,82 @@
-# Android build — known limitations
+# Android build
 
-The APK builds and installs, but it is **not fit for current Android phones**.
-These findings come from auditing the built artefact (`tools/check_apk.py`),
-not from running it on a device. **No emulator or device test has been done.**
+The APK is audited on every build by `tools/check_apk.py`, which **gates the
+workflow** (`--strict`). Current state: **6/6 passing**.
 
-Run the audit yourself against any built APK:
+```
+[PASS] native libs present    64 .so files
+[PASS] 16 KB page alignment   32 64-bit libs aligned (32-bit ABIs exempt)
+[PASS] TLS library supported  no EOL TLS
+[PASS] target SDK             targetSdk=35 (Google Play requires >=35)
+[PASS] not debuggable         release flags
+[PASS] ffmpeg bundled         present
+```
+
+Run it yourself against any APK:
 
 ```bash
 pip install androguard
-python tools/check_apk.py path/to/app.apk
+python tools/check_apk.py path/to/app.apk --strict
 ```
 
-## Blocking
+## What each check exists for
 
-| Issue | Effect | Fix |
-|---|---|---|
-| Native libs are 4 KB aligned | **Will not load on Android 15+ devices using 16 KB pages.** All 20 `.so` files report `p_align = 0x1000`; 16 KB devices need `0x4000`. | Needs NDK r27+, which needs a newer python-for-android than the pinned `v2024.01.21`. |
-| No ffmpeg in the APK | The four MP4 options need stream merging and the four audio options (MP3/M4A/OPUS/FLAC) need extraction — **all eight require ffmpeg, which is absent**. Only progressive single-file MP4 can download. | Add an ffmpeg recipe to `requirements`, or drop the formats that cannot work. |
-| `targetSdk = 34` | Google Play requires 35+ (since Aug 2025). **Cannot be published.** | Raise `android.api`; needs a newer p4a/NDK. |
-| Debug-signed, `android:debuggable=true` | Not distributable, and debuggable in a shipped build is a security problem. | `buildozer android release` plus a signing key. |
+| Check | Why |
+|---|---|
+| 16 KB page alignment | Android 15+ devices may use 16 KB memory pages; 4 KB-aligned native libs will not load there. 64-bit only — 32-bit ABIs always use 4 KB and are exempt. |
+| TLS library supported | OpenSSL 1.1.1 went end-of-life 2023-09-11. It handles all HTTPS traffic. |
+| target SDK | Google Play's floor; raise `MIN_TARGET_SDK` as Google raises it. |
+| not debuggable | `buildozer android debug` sets `android:debuggable=true`, which must never ship. |
+| ffmpeg bundled | All eight formats need it — the four MP4 options merge separate streams, the four audio options transcode. Without it none complete. |
 
-## Non-blocking but real
+## Signing
 
-- **OpenSSL 1.1.1 is bundled** (`libssl1.1.so`, `libcrypto1.1.so`) — end-of-life since
-  2023-09-11 and carrying unpatched CVEs. It handles all HTTPS traffic. Comes from the
-  pinned p4a; a newer p4a builds OpenSSL 3.x.
-- **Downloads are not user-visible.** `SAVE_DIR` is `Path.home()/Downloads/YouTubeDownloader`.
-  Android has no user home directory; p4a points `HOME` at app-private storage, and the app
-  uses no MediaStore or SAF API, so files never reach the shared `Downloads` folder.
-  `WRITE_EXTERNAL_STORAGE` is declared but grants nothing on Android 11+.
+Release builds are signed. Set these repository secrets to use a stable key:
 
-## Why the toolchain is pinned back
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | `base64 -w0 release.keystore` |
+| `ANDROID_KEYSTORE_ALIAS` | key alias |
+| `ANDROID_KEYSTORE_PASSWORD` | keystore password |
+| `ANDROID_KEY_PASSWORD` | key password |
 
-`p4a.branch = v2024.01.21` is pinned because the current release cannot build this app:
+```bash
+keytool -genkeypair -v -keystore release.keystore -alias upload \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 release.keystore    # -> ANDROID_KEYSTORE_BASE64
+```
 
-- `v2026.05.09` resolves dependencies as Android wheels
-  (`--only-binary=:all: --platform=android_24_*`) and then fails installing them —
-  `charset_normalizer-…-cp314-…-android_24_arm64_v8a.whl is not a supported wheel on
-  this platform` — because the host pip is 3.11.
-- Unpinned `master` additionally fails compiling kivy against the CPython it builds.
+**Without these secrets CI signs with a throwaway key generated per build.** Such
+an APK installs fine for testing but cannot be upgraded in place, because Android
+requires a stable signature across versions. Set the secrets before shipping to
+users. The build logs a warning when it falls back.
 
-Unblocking the items above means getting a modern p4a to build first. Setting
-`LDFLAGS=-Wl,-z,max-page-size=16384` was tried and has **no effect**: p4a v2024.01.21
-sets its own link flags per recipe.
+## Toolchain
+
+`p4a.commit` pins python-for-android to an exact commit rather than a branch —
+unpinned drift is what broke this build twice. Two things to know when bumping:
+
+- `v2026.05.09` **cannot build this app**: its dependency install stage drops
+  `--platform`/`--python-version`, so pip rejects the android-tagged wheels it
+  just resolved (`charset_normalizer-…-cp314-…-android_24_arm64_v8a.whl is not a
+  supported wheel on this platform`). Fixed on `develop` by
+  *Remove venv creation for python package install stage* (#3366).
+- The NDK is deliberately **not** pinned, so p4a's default (r27+) is used. That
+  is what produces 16 KB-aligned libraries.
+
+`android.release_artifact = apk` — buildozer otherwise emits an `.aab`, which is
+Play-Store-only and cannot be sideloaded.
+
+## Storage
+
+Downloads go to `getExternalFilesDir()`
+(`Android/data/<pkg>/files/YouTubeDownloader`), which is user-visible in a file
+manager and needs no runtime permission. `Path.home()` — the previous default —
+points at app-private storage on Android, where nothing can see the files.
+
+## Not covered
+
+The APK has **never been installed or run on a device or emulator**. Every
+statement here comes from auditing the artefact and reading the source. Kivy
+needs a windowing backend, so `android/main.py` is parsed and inspected
+statically rather than executed.

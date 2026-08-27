@@ -53,7 +53,6 @@ def _ffmpeg_location():
     return path if os.path.exists(path) else None
 
 
-SAVE_DIR = _save_dir()
 
 # (display label, is_video, yt-dlp format string, audio codec or None)
 _FORMATS = [
@@ -75,7 +74,8 @@ _BTN_RED  = (0.55, 0.08, 0.08, 1)
 class RootLayout(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", padding=16, spacing=8, **kwargs)
-        os.makedirs(SAVE_DIR, exist_ok=True)
+        self.save_dir = _save_dir()
+        os.makedirs(self.save_dir, exist_ok=True)
 
         self._fmt_idx = 0
         self._cancel_event = threading.Event()
@@ -252,9 +252,9 @@ class RootLayout(BoxLayout):
 
                 Clock.schedule_once(_upd)
 
-        archive = os.path.join(SAVE_DIR, ".ytdl-archive")
+        archive = os.path.join(self.save_dir, ".ytdl-archive")
         outtmpl = os.path.join(
-            SAVE_DIR,
+            self.save_dir,
             "%(playlist_title&{}|)s/%(title)s.%(ext)s",
         )
         ydl_opts = {
@@ -323,7 +323,7 @@ class RootLayout(BoxLayout):
     def _on_complete(self):
         self.progress_bar.value = 100
         self._set_status("Download complete!")
-        self._append_log(f"Saved to: {SAVE_DIR}")
+        self._append_log(f"Saved to: {self.save_dir}")
         self._reset_btn()
 
     def _on_cancelled(self):
