@@ -10,7 +10,9 @@ dependencies = []
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+addopts = "-m 'not network'"
 markers = [
+    "network: hits live YouTube; excluded by default, run with -m network",
     "integration: exercises real downloads over a local HTTP server",
     "security: asserts a security property",
 ]

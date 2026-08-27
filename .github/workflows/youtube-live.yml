@@ -1,0 +1,62 @@
+name: Live YouTube matrix
+
+# Not run on push: YouTube rate-limits and bot-checks CI address ranges, so
+# gating every commit on it would make the suite flaky. Run it deliberately
+# before a release, or when yt-dlp is bumped.
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'YouTube URL to test against'
+        required: false
+        default: 'https://www.youtube.com/watch?v=CXkjMNHOBQI'
+
+concurrency:
+  group: youtube-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+
+      - name: Install Qt system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            libxcb-cursor0 libxcb-xinerama0 libxkbcommon-x11-0 \
+            libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libgl1-mesa-dev libegl1
+
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg --quiet
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Run every quality and audio format against a live URL
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: pytest -m network -v --url "${{ inputs.url }}"

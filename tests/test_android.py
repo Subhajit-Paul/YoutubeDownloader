@@ -137,12 +137,25 @@ def test_ffmpeg_location_is_passed_to_yt_dlp():
         "p4a installs the ffmpeg CLI under this name in the native lib dir")
 
 
-def test_ytdlp_accepts_the_bundled_binary_name():
-    """yt-dlp resolves the program by substring, so the p4a name must contain it."""
+def test_ytdlp_accepts_the_bundled_binary_name(tmp_path):
+    """p4a names the ffmpeg CLI 'libffmpegbin.so'. yt-dlp resolves the program by
+    substring, so that name must still be recognised as ffmpeg — asserted through
+    behaviour rather than yt-dlp internals, which have already changed once."""
+    import yt_dlp
     from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
-    programs = [*FFmpegPostProcessor._ffmpeg_to_avconv.keys(),
-                *FFmpegPostProcessor._ffmpeg_to_avconv.values()]
-    assert any(p in "libffmpegbin.so" for p in programs)
+    binary = tmp_path / "libffmpegbin.so"
+    binary.write_bytes(b"")
+    pp = FFmpegPostProcessor(yt_dlp.YoutubeDL({"quiet": True}))
+    # _ffmpeg_location is a class-level ContextVar: shared global state. Leaving
+    # it set would point every later test at this empty stub.
+    token = pp._ffmpeg_location.set(str(binary))
+    try:
+        paths = pp._determine_executables()
+    finally:
+        pp._ffmpeg_location.reset(token)
+    assert paths.get("ffmpeg") == str(binary), (
+        f"yt-dlp no longer resolves the p4a binary name: {paths}")
+    assert FFmpegPostProcessor._ffmpeg_location.get() is None, "leaked global state"
 
 
 def test_downloads_do_not_default_to_app_private_home():

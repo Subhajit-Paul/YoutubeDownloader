@@ -14,3 +14,11 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 pytest_plugins = ["tests.conftest_media"]
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--url",
+        default="https://www.youtube.com/watch?v=CXkjMNHOBQI",
+        help="YouTube URL for the live network matrix (-m network)",
+    )
