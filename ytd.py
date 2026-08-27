@@ -14,7 +14,8 @@ from PyQt5.QtWidgets import (
     QFileDialog, QFrame, QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
     QCheckBox,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QThread, QTimer, QRectF, QPointF
+from PyQt5.QtCore import (Qt, pyqtSignal, QObject, QThread, QTimer, QRectF,
+                          QPointF, QPropertyAnimation, QEasingCurve)
 from PyQt5.QtGui import (
     QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor,
     QLinearGradient, QPen,
@@ -107,8 +108,9 @@ class _ThumbWidget(QWidget):
                     p.fillRect(
                         QRectF(filled - 16, 0, 18, self.H), grad)
         else:
-            p.fillRect(rect, QColor('{_SURFACE}'))
-            p.setPen(QColor('{_BORDER}'))
+            import theme as _T
+            p.fillRect(rect, QColor(_T.SURFACE))
+            p.setPen(QColor(_T.FAINT))
             p.setFont(QFont('', 26))
             p.drawText(rect, Qt.AlignCenter, self._placeholder_text)
 
@@ -352,6 +354,7 @@ from theme import (
 class YoutubeDownloaderApp(QMainWindow):
 
     _SS = f"""
+        * {{ font-family: {_FONT}; }}
         QMainWindow, QWidget#root {{ background: {_BG}; }}
 
         QLabel {{ color: {_TEXT}; }}
@@ -415,17 +418,45 @@ class YoutubeDownloaderApp(QMainWindow):
         QPushButton#primary:pressed {{ background: {_ACCENT_PRESSED}; }}
         QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: {_BORDER_STRONG}; }}
 
+        /* Cancelling mid-download is routine, not destructive: a full-width
+           red button made it the loudest thing on screen. Quiet by default,
+           red only on hover, where intent is already expressed. */
         QPushButton#cancel {{
             background: transparent;
-            border: 1.5px solid {_ERROR};
-            color: {_ERROR};
-            font-size: 14px;
-            font-weight: bold;
-            border-radius: 12px;
-            padding: 13px;
+            border: 1px solid {_BORDER_STRONG};
+            color: {_MUTED};
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: {_R_CTL}px;
+            padding: 10px 18px;
         }}
-        QPushButton#cancel:hover {{ background: {_CARD}; border-color: {_ERROR}; }}
-        QPushButton#cancel:disabled {{ border-color: #333; color: #555; }}
+        QPushButton#cancel:hover {{
+            background: {_CARD}; border-color: {_ERROR}; color: {_ERROR};
+        }}
+        QPushButton#cancel:disabled {{
+            border-color: {_BORDER}; color: {_FAINT};
+        }}
+
+        /* Secondary: present, but never competing with the primary action. */
+        QPushButton#secondary {{
+            background: {_SURFACE};
+            border: 1px solid {_BORDER};
+            color: {_MUTED};
+            font-size: 13px;
+            font-weight: 500;
+            border-radius: {_R_CTL}px;
+            padding: 0 14px;
+        }}
+        QPushButton#secondary:hover {{
+            background: {_CARD}; border-color: {_BORDER_STRONG}; color: {_TEXT};
+        }}
+        QPushButton#secondary:pressed {{ background: {_SURFACE}; }}
+
+        /* The bar carries the progress; the number annotates it. */
+        QLabel#pct {{
+            color: {_TEXT}; font-size: 15px; font-weight: 600;
+            letter-spacing: -0.2px;
+        }}
 
         QProgressBar {{
             background: {_SURFACE};
@@ -475,7 +506,17 @@ class YoutubeDownloaderApp(QMainWindow):
             color: {_MUTED}; font-size: 14px; font-weight: 500;
         }}
         QLabel#empty_body {{ color: {_FAINT}; font-size: 12px; }}
+
+        QPushButton:focus {{
+            border: 1px solid {_ACCENT};
+        }}
+        QPushButton#primary:focus {{
+            border: 2px solid {_TEXT};
+        }}
+        QComboBox:focus {{ border-color: {_ACCENT}; }}
+        QCheckBox:focus {{ color: {_TEXT}; }}
     """
+
 
 
     def __init__(self):
@@ -546,7 +587,8 @@ class YoutubeDownloaderApp(QMainWindow):
         self.url_input.textChanged.connect(self._on_url_changed)
         url_row.addWidget(self.url_input)
         paste_btn = QPushButton('Paste')
-        paste_btn.setFixedSize(72, 46)
+        paste_btn.setObjectName('secondary')
+        paste_btn.setMinimumSize(84, 46)
         paste_btn.clicked.connect(self._paste_and_fetch)
         url_row.addWidget(paste_btn)
         layout.addLayout(url_row)
@@ -620,7 +662,8 @@ class YoutubeDownloaderApp(QMainWindow):
         self.save_input.setMinimumHeight(44)
         save_row.addWidget(self.save_input)
         browse_btn = QPushButton('Browse')
-        browse_btn.setFixedSize(80, 44)
+        browse_btn.setObjectName('secondary')
+        browse_btn.setMinimumSize(92, 44)
         browse_btn.clicked.connect(self._browse)
         save_row.addWidget(browse_btn)
         ctrl_layout.addLayout(save_row)
@@ -723,13 +766,13 @@ class YoutubeDownloaderApp(QMainWindow):
         layout.addWidget(self.dl_btn)
 
         # ── Cancel button ────────────────────────────────────────────────────
-        self.cancel_btn = QPushButton('✕  Cancel Download')
+        self.cancel_btn = QPushButton('Cancel')
         self.cancel_btn.setObjectName('cancel')
-        self.cancel_btn.setMinimumHeight(50)
+        self.cancel_btn.setMinimumHeight(36)
+        self.cancel_btn.setMinimumWidth(96)
+        self.cancel_btn.setMaximumWidth(120)
         self.cancel_btn.clicked.connect(self._cancel_download)
         self.cancel_btn.hide()
-        layout.addWidget(self.cancel_btn)
-        layout.addSpacing(14)
 
         # ── Progress section ─────────────────────────────────────────────────
         self.progress_widget = QWidget()
@@ -737,15 +780,24 @@ class YoutubeDownloaderApp(QMainWindow):
         prog_layout.setContentsMargins(0, 0, 0, 0)
         prog_layout.setSpacing(6)
 
-        # Large percentage
+        # A percentage reads as an annotation on the bar, not as a headline.
+        # 52pt centred type made the number the loudest object in the window.
         self.pct_big = QLabel('0%')
-        self.pct_big.setAlignment(Qt.AlignCenter)
-        self.pct_big.setFont(QFont('', 52, QFont.Bold))
-        self.pct_big.setStyleSheet(f'color: {_ACCENT};')
-        prog_layout.addWidget(self.pct_big)
+        self.pct_big.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.pct_big.setObjectName('pct')
+
+        pct_row = QHBoxLayout()
+        pct_row.setContentsMargins(0, 0, 0, 0)
+        pct_row.addWidget(self.pct_big)
+        pct_row.addStretch()
+        pct_row.addWidget(self.cancel_btn)
+        prog_layout.addLayout(pct_row)
 
         self.progress_bar = QProgressBar()
         self.progress_bar.setValue(0)
+        self._bar_anim = QPropertyAnimation(self.progress_bar, b'value')
+        self._bar_anim.setDuration(180)
+        self._bar_anim.setEasingCurve(QEasingCurve.OutCubic)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(5)
         prog_layout.addWidget(self.progress_bar)
@@ -870,7 +922,6 @@ class YoutubeDownloaderApp(QMainWindow):
         self.progress_widget.show()
         self.thumb.setProgress(0)
         self.pct_big.setText('0%')
-        self.pct_big.setStyleSheet(f'color: {_ACCENT};')
         self.progress_bar.setValue(0)
         self.speed_label.setText('')
 
@@ -971,7 +1022,11 @@ class YoutubeDownloaderApp(QMainWindow):
     def _on_progress(self, d: dict):
         pct = d['percent']
         ipct = int(pct)
-        self.progress_bar.setValue(ipct)
+        # Animate toward the new value instead of snapping to it.
+        self._bar_anim.stop()
+        self._bar_anim.setStartValue(self.progress_bar.value())
+        self._bar_anim.setEndValue(ipct)
+        self._bar_anim.start()
         self.pct_big.setText(f'{ipct}%')
         self.thumb.setProgress(pct)
 
@@ -1005,7 +1060,7 @@ class YoutubeDownloaderApp(QMainWindow):
         self.thumb.setProgress(100)
         self.progress_bar.setValue(100)
         self.pct_big.setText('✓')
-        self.pct_big.setStyleSheet(f'color: {_SUCCESS};')
+        self.pct_big.setStyleSheet(f'color: {_SUCCESS}; font-size: 15px; font-weight: 600;')
         self.speed_label.setText('')
         self.cancel_btn.hide()
         self.controls.show()

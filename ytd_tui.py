@@ -96,6 +96,21 @@ class YTDApp(App):
 
     #divider {{ height: 1; background: {T.BORDER}; margin-bottom: 1; }}
 
+    /* Metadata card — the TUI previously showed nothing about the video before
+       downloading, so it had no structural counterpart to the GUI card. */
+    #meta-card {{
+        display: none;
+        height: auto;
+        width: 100%;
+        background: {T.CARD};
+        border: tall {T.BORDER};
+        padding: 0 2;
+        margin-bottom: 1;
+    }}
+    #meta-card.visible {{ display: block; }}
+    #meta-title {{ color: {T.TEXT}; text-style: bold; width: 100%; }}
+    #meta-sub {{ color: {T.MUTED}; width: 100%; }}
+
     /* ── Inputs ──────────────────────────────────────────────────────────── */
     Input {{
         background: {T.SURFACE};
@@ -222,6 +237,7 @@ class YTDApp(App):
     def __init__(self):
         super().__init__()
         self._cancel_event = threading.Event()
+        self._meta_timer = None
         self._completed = 0
         self._total = 0
         self._lock = threading.Lock()
@@ -238,6 +254,10 @@ class YTDApp(App):
                     placeholder="https://youtube.com/watch?v=…  (or playlist / channel URL)",
                     id="url-input",
                 )
+
+            with Vertical(id="meta-card"):
+                yield Label("", id="meta-title")
+                yield Label("", id="meta-sub")
 
             with Horizontal(classes="row"):
                 yield Label("Save to", classes="field-label")
@@ -337,6 +357,50 @@ class YTDApp(App):
         self.query_one("#quality-select", Select).display = not is_audio
         self.query_one("#format-select", Select).display = is_audio
         self.query_one("#bitrate-select", Select).display = is_audio
+
+    @on(Input.Changed, "#url-input")
+    def on_url_changed(self, event: Input.Changed) -> None:
+        if self._meta_timer is not None:
+            self._meta_timer.stop()
+        url = event.value.strip()
+        if not url.startswith(("http://", "https://")):
+            self.query_one("#meta-card").remove_class("visible")
+            return
+        # Debounced: fetching on every keystroke would hammer the extractor
+        # while the user is still pasting.
+        self._meta_timer = self.set_timer(0.6, lambda: self._fetch_meta(url))
+
+    @work(thread=True, exclusive=True, group="meta")
+    def _fetch_meta(self, url: str) -> None:
+        if yt_dlp is None:
+            return
+        try:
+            opts = {"quiet": True, "no_warnings": True,
+                    "extract_flat": "in_playlist"}
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+        except Exception:
+            return
+        if not info:
+            return
+        if info.get("_type") == "playlist":
+            entries = [e for e in (info.get("entries") or []) if e]
+            count = info.get("playlist_count") or len(entries)
+            sub = f"Playlist · {count} items"
+        else:
+            secs = info.get("duration") or 0
+            mins, sec = divmod(int(secs), 60)
+            hrs, mins = divmod(mins, 60)
+            dur = f"{hrs}:{mins:02d}:{sec:02d}" if hrs else f"{mins}:{sec:02d}"
+            channel = info.get("channel") or info.get("uploader") or ""
+            sub = f"{channel} · {dur}" if channel else dur
+        self.call_from_thread(self._ui_meta, info.get("title", ""), sub)
+
+    def _ui_meta(self, title: str, sub: str) -> None:
+        self.query_one("#meta-title", Label).update(title)
+        self.query_one("#meta-sub", Label).update(sub)
+        self.query_one("#meta-card").add_class("visible")
+        self.query_one("#empty").add_class("hidden")
 
     @on(Input.Submitted, "#url-input")
     def on_url_submitted(self, _) -> None:

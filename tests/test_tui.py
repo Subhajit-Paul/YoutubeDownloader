@@ -210,3 +210,43 @@ async def test_all_deps_present_keeps_log_closed(app):
     async with app.run_test():
         assert app.query_one("#log").display is False
         assert app.query_one("#download-btn").disabled is False
+
+
+# ── metadata card ────────────────────────────────────────────────────────────
+# The TUI had no counterpart to the GUI's info card, so the two front-ends were
+# only consistent in palette, not in structure.
+
+async def test_meta_card_is_hidden_until_there_is_metadata(app):
+    async with app.run_test():
+        assert app.query_one("#meta-card").display is False
+
+
+async def test_meta_card_shows_title_and_detail(app):
+    async with app.run_test() as pilot:
+        app._ui_meta("Some Song", "Some Channel · 3:21")
+        await pilot.pause()
+        card = app.query_one("#meta-card")
+        assert card.display is True
+        assert "Some Song" in str(app.query_one("#meta-title").render())
+        assert "Some Channel" in str(app.query_one("#meta-sub").render())
+
+
+async def test_meta_card_replaces_the_empty_state(app):
+    async with app.run_test() as pilot:
+        assert app.query_one("#empty").display is True
+        app._ui_meta("Song", "Channel · 1:00")
+        await pilot.pause()
+        assert app.query_one("#empty").display is False
+
+
+@pytest.mark.parametrize("bad", ["not a url", "ftp://x/y", ""])
+async def test_non_http_input_does_not_fetch_metadata(app, monkeypatch, bad):
+    """Debounced fetch must not fire for text that cannot be a video."""
+    called = []
+    monkeypatch.setattr(ytd_tui.YTDApp, "_fetch_meta",
+                        lambda self, url: called.append(url))
+    async with app.run_test() as pilot:
+        app.query_one("#url-input").value = bad
+        await pilot.pause()
+        assert called == []
+        assert app.query_one("#meta-card").display is False
