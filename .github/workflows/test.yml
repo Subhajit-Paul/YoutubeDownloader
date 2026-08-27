@@ -38,13 +38,26 @@ jobs:
             libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
             libxcb-render-util0 libxcb-shape0 libgl1-mesa-dev libegl1
 
+      # Integration tests transcode a real clip; they fail (not skip) without this.
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg --quiet
+
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg --no-progress -y
+
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
       - name: Run test suite
         env:
           QT_QPA_PLATFORM: offscreen
-        run: pytest -q --junitxml=results-${{ matrix.os }}-${{ matrix.python }}.xml
+        run: pytest -q -ra --junitxml=results-${{ matrix.os }}-${{ matrix.python }}.xml
 
       - name: Check the TUI installer script
         if: runner.os != 'Windows'

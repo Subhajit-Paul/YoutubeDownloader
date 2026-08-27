@@ -173,3 +173,50 @@ def test_playlists_go_into_a_subfolder(runner):
     r = _Recorder()
     runner(r)
     assert "playlist_title" in r.opts["outtmpl"]
+
+
+# ── output template ──────────────────────────────────────────────────────────
+# The template is fed to yt-dlp, not to Python's % operator. A template that is
+# merely wrong raises KeyError at download time, which is how all three apps
+# shipped unable to download anything at all.
+
+def _outtmpl(runner):
+    r = _Recorder()
+    runner(r)
+    return r.opts["outtmpl"]
+
+
+@pytest.mark.parametrize("runner", [_run_video, _run_audio], ids=["video", "audio"])
+def test_outtmpl_is_accepted_by_yt_dlp(runner):
+    import yt_dlp
+    ydl = yt_dlp.YoutubeDL({"outtmpl": _outtmpl(runner), "quiet": True})
+    ydl.prepare_filename({"title": "Song", "ext": "mp4", "id": "x"})
+
+
+@pytest.mark.parametrize("runner", [_run_video, _run_audio], ids=["video", "audio"])
+def test_single_video_lands_directly_in_the_save_folder(runner):
+    import os
+    import yt_dlp
+    ydl = yt_dlp.YoutubeDL({"outtmpl": _outtmpl(runner), "quiet": True})
+    got = os.path.normpath(ydl.prepare_filename({"title": "Song", "ext": "mp4", "id": "x"}))
+    assert os.path.basename(got) == "Song.mp4"
+    assert os.path.dirname(got) == os.path.normpath("/tmp/dl")
+
+
+@pytest.mark.parametrize("runner", [_run_video, _run_audio], ids=["video", "audio"])
+def test_playlist_item_lands_in_a_real_subfolder(runner):
+    import os
+    import yt_dlp
+    ydl = yt_dlp.YoutubeDL({"outtmpl": _outtmpl(runner), "quiet": True})
+    got = os.path.normpath(ydl.prepare_filename(
+        {"title": "Song", "ext": "mp4", "id": "x", "playlist_title": "My Mix"}))
+    assert os.path.basename(got) == "Song.mp4"
+    assert os.path.basename(os.path.dirname(got)) == "My Mix", (
+        f"playlist must nest in its own directory, got {got!r}")
+
+
+def test_tui_uses_the_same_template_as_the_gui():
+    """All three apps must agree; the TUI keeps its own copy."""
+    import re
+    src = (ROOT_TUI := __import__("pathlib").Path(ytd_tui.__file__)).read_text(encoding="utf-8")
+    assert '"%(playlist_title&{}|)s/%(title)s.%(ext)s"' in src

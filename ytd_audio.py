@@ -277,7 +277,7 @@ class DownloadWorker(QObject):
         archive = os.path.join(self.save_path, '.ytdl-archive')
         outtmpl = os.path.join(
             self.save_path,
-            '%(playlist_title&%(playlist_title)s/|)s%(title)s.%(ext)s',
+            '%(playlist_title&{}|)s/%(title)s.%(ext)s',
         )
         ydl_opts = {
             'format': 'bestaudio/best',
@@ -313,9 +313,15 @@ class DownloadWorker(QObject):
         try:
             self.status.emit('Starting…')
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([self.url])
+                retcode = ydl.download([self.url])
             if self._cancel.is_set():
                 self.error.emit('cancelled')
+            elif retcode:
+                # ignoreerrors keeps playlists going past a bad item, so yt-dlp
+                # returns non-zero instead of raising. Without this the app
+                # reports success for a download that produced no file.
+                self.error.emit('Download finished with errors — '
+                                'some items may be missing.')
             else:
                 self.finished.emit()
         except yt_dlp.utils.DownloadCancelled:

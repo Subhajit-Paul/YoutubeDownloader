@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import webbrowser
 
@@ -28,12 +29,23 @@ def _platform_suffix():
     return "linux-x86_64.deb"
 
 
+def _is_https(url):
+    """Release metadata is untrusted input; what we download then execute must be TLS."""
+    try:
+        return urllib.parse.urlparse(url).scheme == "https"
+    except (ValueError, AttributeError):
+        return False
+
+
 def _find_asset(assets, app_slug):
     suffix = _platform_suffix()
     for asset in assets:
         n = asset["name"]
         if app_slug in n and n.endswith(suffix):
-            return asset["browser_download_url"], n
+            url = asset.get("browser_download_url", "")
+            if not _is_https(url):
+                continue
+            return url, n
     return None, None
 
 
@@ -47,13 +59,20 @@ def check_update(app_slug):
         tag = data["tag_name"]
         if _parse_version(tag) > _parse_version(__version__):
             dl_url, name = _find_asset(data["assets"], app_slug)
-            return tag, dl_url, name, data["html_url"]
+            # html_url is handed to webbrowser.open(); never open a scheme we
+            # were told to (javascript:, file:) — fall back to the known repo.
+            html = data.get("html_url", "")
+            if not _is_https(html):
+                html = f"https://github.com/{GITHUB_REPO}/releases/latest"
+            return tag, dl_url, name, html
     except Exception as exc:
         print(f"[updater] check_update failed: {exc}", file=sys.stderr)
     return None, None, None, None
 
 
 def download_file(url, dest, progress_cb=None):
+    if not _is_https(url):
+        raise ValueError(f"refusing to download over a non-https URL: {url!r}")
     req = urllib.request.Request(url, headers={"User-Agent": "YTD-Updater/1.0"})
     with urllib.request.urlopen(req, timeout=60) as resp:
         total = int(resp.headers.get("Content-Length") or 0)

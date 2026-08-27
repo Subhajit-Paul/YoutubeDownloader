@@ -527,7 +527,7 @@ class YTDApp(App):
         archive = os.path.join(save_path, ".ytdl-archive")
         outtmpl = os.path.join(
             save_path,
-            "%(playlist_title&%(playlist_title)s/|)s%(title)s.%(ext)s",
+            "%(playlist_title&{}|)s/%(title)s.%(ext)s",
         )
         base_opts = {
             "outtmpl": outtmpl,
@@ -581,9 +581,16 @@ class YTDApp(App):
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                retcode = ydl.download([url])
             if cancel.is_set():
                 self.call_from_thread(self._ui_cancelled)
+            elif retcode:
+                # ignoreerrors keeps playlists going past a bad item, so yt-dlp
+                # returns non-zero instead of raising. Without this the app
+                # reports success for a download that produced no file.
+                self.call_from_thread(
+                    self._ui_error,
+                    "Download finished with errors — some items may be missing.")
             else:
                 self.call_from_thread(self._ui_done)
         except yt_dlp.utils.DownloadCancelled:
