@@ -62,6 +62,14 @@ jobs:
           echo "apk_path=android/$APK" >> "$GITHUB_OUTPUT"
           echo "apk_name=$(basename $APK)" >> "$GITHUB_OUTPUT"
 
+      # Reports device-compatibility and security properties of the artefact.
+      # Not --strict yet: several checks fail today and are tracked in the README.
+      - name: Audit APK
+        run: |
+          pip install androguard
+          python tools/check_apk.py "${{ steps.find_apk.outputs.apk_path }}" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Upload APK artifact
         uses: actions/upload-artifact@v7
         with:
