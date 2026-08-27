@@ -11,12 +11,43 @@ import ytd_tui
 
 @pytest.fixture
 def app(monkeypatch):
+    """App with downloads stubbed and all dependencies reported present.
+
+    on_mount() calls check_deps(); a missing ffmpeg opens the log and disables
+    the download button. Pinning that to "nothing missing" keeps these tests
+    about the UI rather than about whatever happens to be on the machine.
+    The missing-dependency behaviour is covered explicitly further down.
+    """
+    import dep_check
+    monkeypatch.setattr(dep_check, "check_deps", lambda **kw: [])
     calls = []
     monkeypatch.setattr(ytd_tui.YTDApp, "_run_download",
                         lambda self, *a, **k: calls.append((a, k)))
     instance = ytd_tui.YTDApp()
     instance.download_calls = calls
     return instance
+
+
+@pytest.fixture
+def app_missing_ffmpeg(monkeypatch):
+    import dep_check
+    monkeypatch.setattr(dep_check, "check_deps", lambda **kw: [
+        {"name": "ffmpeg", "reason": "Required for merging.",
+         "cmd": "sudo apt install ffmpeg", "required": True},
+    ])
+    monkeypatch.setattr(ytd_tui.YTDApp, "_run_download", lambda self, *a, **k: None)
+    return ytd_tui.YTDApp()
+
+
+@pytest.fixture
+def app_missing_optional(monkeypatch):
+    import dep_check
+    monkeypatch.setattr(dep_check, "check_deps", lambda **kw: [
+        {"name": "something", "reason": "Nice to have.",
+         "cmd": "pip install something", "required": False},
+    ])
+    monkeypatch.setattr(ytd_tui.YTDApp, "_run_download", lambda self, *a, **k: None)
+    return ytd_tui.YTDApp()
 
 
 async def test_app_mounts_with_url_focused(app):
@@ -144,20 +175,38 @@ def test_bindings_colliding_with_input_are_priority(key):
         f"{key} is swallowed by the focused URL Input without priority=True")
 
 
-async def test_advertised_bindings_fire_while_url_input_is_focused(app):
+async def test_advertised_bindings_fire_while_url_input_is_focused(app, monkeypatch):
     """Press each binding with the default focus and assert the action ran."""
     fired = []
-    for action in ("toggle_adv", "toggle_log"):
-        monkeyed = f"action_{action}"
-        setattr(ytd_tui.YTDApp, monkeyed,
-                lambda self, a=action: fired.append(a))
-    try:
-        async with app.run_test() as pilot:
-            assert pilot.app.focused.id == "url-input"
-            await pilot.press("ctrl+a")
-            await pilot.press("ctrl+l")
-            await pilot.pause()
-        assert set(fired) == {"toggle_adv", "toggle_log"}
-    finally:
-        importlib_reload = __import__("importlib").reload
-        importlib_reload(ytd_tui)
+    monkeypatch.setattr(ytd_tui.YTDApp, "action_toggle_adv",
+                        lambda self: fired.append("adv"))
+    monkeypatch.setattr(ytd_tui.YTDApp, "action_toggle_log",
+                        lambda self: fired.append("log"))
+    async with app.run_test() as pilot:
+        assert pilot.app.focused.id == "url-input"
+        await pilot.press("ctrl+a")
+        await pilot.press("ctrl+l")
+        await pilot.pause()
+    assert set(fired) == {"adv", "log"}
+
+
+# ── startup dependency handling ──────────────────────────────────────────────
+
+async def test_missing_required_dep_opens_log_and_blocks_download(app_missing_ffmpeg):
+    app = app_missing_ffmpeg
+    async with app.run_test():
+        assert app.query_one("#log").display is True, "user must see why it failed"
+        assert app.query_one("#download-btn").disabled is True
+
+
+async def test_missing_optional_dep_warns_but_allows_download(app_missing_optional):
+    app = app_missing_optional
+    async with app.run_test():
+        assert app.query_one("#log").display is True
+        assert app.query_one("#download-btn").disabled is False
+
+
+async def test_all_deps_present_keeps_log_closed(app):
+    async with app.run_test():
+        assert app.query_one("#log").display is False
+        assert app.query_one("#download-btn").disabled is False

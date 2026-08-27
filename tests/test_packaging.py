@@ -25,7 +25,7 @@ GUI_APPS = APPS[:2]
 
 
 def _read(rel):
-    return (ROOT / rel).read_text()
+    return (ROOT / rel).read_text(encoding="utf-8")
 
 
 # ── version consistency ──────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ def test_no_orphaned_nsi_scripts():
 def test_deb_has_a_desktop_entry(spec, entry, exe):
     desktop = ROOT / "packaging" / "linux" / f"{exe}.desktop"
     assert desktop.exists(), "make-deb.sh installs <app>.desktop unconditionally"
-    assert f"Exec={exe}" in desktop.read_text()
+    assert f"Exec={exe}" in desktop.read_text(encoding="utf-8")
 
 
 def test_no_orphaned_desktop_files():
