@@ -1,0 +1,87 @@
+"""android/main.py — the Kivy app, checked without importing kivy.
+
+Kivy is not installable in this test environment (it needs a windowing
+backend), so the module is parsed and inspected statically rather than run.
+That is enough to catch the class of bug that shipped: logic copied from the
+desktop apps and then not kept in step with them.
+"""
+import ast
+import pathlib
+import re
+
+import pytest
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
+MAIN = ROOT / "android" / "main.py"
+SRC = MAIN.read_text(encoding="utf-8")
+TREE = ast.parse(SRC)
+
+# Every app that builds a yt-dlp output template.
+APPS_WITH_OUTTMPL = ["ytd.py", "ytd_audio.py", "ytd_tui.py", "android/main.py"]
+
+
+def _outtmpl_literals(path):
+    src = (ROOT / path).read_text(encoding="utf-8")
+    return re.findall(r'["\'](%\(playlist_title[^"\']*)["\']', src)
+
+
+@pytest.mark.parametrize("path", APPS_WITH_OUTTMPL)
+def test_every_app_uses_a_template_yt_dlp_accepts(path):
+    """Regression: the Android app kept the broken template after the desktop
+    apps were fixed, so it silently could not download anything either."""
+    import yt_dlp
+    found = _outtmpl_literals(path)
+    assert found, f"no output template found in {path}"
+    for tmpl in found:
+        ydl = yt_dlp.YoutubeDL({"outtmpl": tmpl, "quiet": True})
+        ydl.prepare_filename({"title": "Song", "ext": "mp4", "id": "x"})
+
+
+def test_all_apps_share_one_output_template():
+    """Four copies of the same string; they must not drift apart again."""
+    seen = {t for p in APPS_WITH_OUTTMPL for t in _outtmpl_literals(p)}
+    assert len(seen) == 1, f"templates have diverged: {seen}"
+
+
+@pytest.mark.parametrize("path", APPS_WITH_OUTTMPL)
+def test_download_return_code_is_checked(path):
+    """ignoreerrors=True means yt-dlp returns non-zero instead of raising."""
+    src = (ROOT / path).read_text(encoding="utf-8")
+    assert "ignoreerrors" in src
+    assert re.search(r"=\s*ydl\.download\(", src), (
+        f"{path} discards ydl.download()'s return code, so failures look like success")
+
+
+# ── static properties of the Kivy app ────────────────────────────────────────
+
+def test_android_module_parses():
+    assert TREE is not None
+
+
+def test_format_table_is_well_formed():
+    """_FORMATS drives the whole UI; a malformed row would crash on launch."""
+    formats = None
+    for node in TREE.body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "_FORMATS":
+            formats = ast.literal_eval(node.value)
+    assert formats, "_FORMATS not found"
+    for label, is_video, fmt, codec in formats:
+        assert isinstance(label, str) and label
+        assert isinstance(is_video, bool)
+        assert isinstance(fmt, str) and fmt
+        assert codec is None or isinstance(codec, str)
+
+
+def test_video_formats_match_the_desktop_quality_map():
+    """The Android video selectors are copies of the desktop ones."""
+    import ytd_tui
+    formats = None
+    for node in TREE.body:
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "_FORMATS":
+            formats = ast.literal_eval(node.value)
+    android_video = {f for _, is_video, f, _ in formats if is_video}
+    assert android_video == set(ytd_tui._QUALITY_MAP.values())
+
+
+def test_no_hardcoded_secrets():
+    assert not re.search(r"(api[_-]?key|secret|token)\s*=\s*['\"][A-Za-z0-9]{16,}", SRC, re.I)

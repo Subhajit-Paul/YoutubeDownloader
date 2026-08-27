@@ -216,7 +216,7 @@ class RootLayout(BoxLayout):
         archive = os.path.join(SAVE_DIR, ".ytdl-archive")
         outtmpl = os.path.join(
             SAVE_DIR,
-            "%(playlist_title&%(playlist_title)s/|)s%(title)s.%(ext)s",
+            "%(playlist_title&{}|)s/%(title)s.%(ext)s",
         )
         ydl_opts = {
             "format": fmt,
@@ -242,9 +242,15 @@ class RootLayout(BoxLayout):
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                retcode = ydl.download([url])
             if self._cancel_event.is_set():
                 Clock.schedule_once(lambda dt: self._on_cancelled())
+            elif retcode:
+                # ignoreerrors keeps playlists going past a bad item, so yt-dlp
+                # returns non-zero instead of raising. Without this the app
+                # reports success for a download that produced no file.
+                Clock.schedule_once(lambda dt: self._on_error(
+                    "Download finished with errors — some items may be missing."))
             else:
                 Clock.schedule_once(lambda dt: self._on_complete())
         except yt_dlp.utils.DownloadCancelled:

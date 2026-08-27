@@ -50,6 +50,9 @@ jobs:
         run: yes | buildozer android debug
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
+          # Android 15+ devices can use 16 KB memory pages; native libs linked
+          # with the default 4 KB max-page-size fail to load there.
+          LDFLAGS: "-Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384"
 
       - name: Find built APK
         id: find_apk
