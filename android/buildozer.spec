@@ -25,7 +25,7 @@ android.minapi = 24
 
 # ponytail: pin p4a to a release so master drift cannot break the build again.
 # Bump deliberately; unpinned master broke kivy 2.3.0 compilation in Aug 2026.
-p4a.branch = master
+p4a.branch = develop
 android.gradle_dependencies =
 android.enable_androidx = True
 
