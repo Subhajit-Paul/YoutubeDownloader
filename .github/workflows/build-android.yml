@@ -50,24 +50,36 @@ jobs:
       # artefact is still installable for testing. Only a keystore-signed build
       # can be shipped to users, because upgrades require a stable signature.
       - name: Prepare signing key
-        id: signing
+        env:
+          # Passed as env, never interpolated into the script body: a secret
+          # containing shell metacharacters would otherwise be executable.
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          if [ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]; then
-            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/release.keystore"
-            echo "alias=${{ secrets.ANDROID_KEYSTORE_ALIAS }}" >> "$GITHUB_OUTPUT"
-            echo "storepass=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> "$GITHUB_OUTPUT"
-            echo "keypass=${{ secrets.ANDROID_KEY_PASSWORD }}" >> "$GITHUB_OUTPUT"
-            echo "stable=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          KS="$RUNNER_TEMP/release.keystore"
+          if [ -n "${KEYSTORE_B64:-}" ]; then
+            printf '%s' "$KEYSTORE_B64" | base64 -d > "$KS"
+            {
+              echo "P4A_RELEASE_KEYSTORE=$KS"
+              echo "P4A_RELEASE_KEYALIAS=$KEYSTORE_ALIAS"
+              echo "P4A_RELEASE_KEYSTORE_PASSWD=$KEYSTORE_PASSWORD"
+              echo "P4A_RELEASE_KEYALIAS_PASSWD=$KEY_PASSWORD"
+            } >> "$GITHUB_ENV"
           else
-            keytool -genkeypair -v -keystore "$RUNNER_TEMP/release.keystore" \
+            keytool -genkeypair -v -keystore "$KS" \
               -alias ci -keyalg RSA -keysize 2048 -validity 10000 \
               -storepass cicicici -keypass cicicici \
               -dname "CN=CI Test Build, O=YoutubeDownloader, C=US"
-            echo "alias=ci" >> "$GITHUB_OUTPUT"
-            echo "storepass=cicicici" >> "$GITHUB_OUTPUT"
-            echo "keypass=cicicici" >> "$GITHUB_OUTPUT"
-            echo "stable=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret; signed with a throwaway key. Test builds only."
+            {
+              echo "P4A_RELEASE_KEYSTORE=$KS"
+              echo "P4A_RELEASE_KEYALIAS=ci"
+              echo "P4A_RELEASE_KEYSTORE_PASSWD=cicicici"
+              echo "P4A_RELEASE_KEYALIAS_PASSWD=cicicici"
+            } >> "$GITHUB_ENV"
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret set — signed with a throwaway key. Installable for testing, but not upgradeable; set the secret before shipping to users."
           fi
 
       - name: Build release APK
@@ -75,10 +87,6 @@ jobs:
         run: yes | buildozer android release
         env:
           CCACHE_DIR: ${{ github.workspace }}/.ccache
-          P4A_RELEASE_KEYSTORE: ${{ runner.temp }}/release.keystore
-          P4A_RELEASE_KEYALIAS: ${{ steps.signing.outputs.alias }}
-          P4A_RELEASE_KEYSTORE_PASSWD: ${{ steps.signing.outputs.storepass }}
-          P4A_RELEASE_KEYALIAS_PASSWD: ${{ steps.signing.outputs.keypass }}
 
       - name: Find built APK
         id: find_apk
