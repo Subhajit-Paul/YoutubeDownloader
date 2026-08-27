@@ -56,7 +56,31 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements-dev.txt
 
+      # YouTube bot-checks datacentre ranges, so hosted runners are usually
+      # refused. Detect that first and say so plainly, rather than letting 17
+      # identical failures read like a product regression.
+      - name: Check YouTube is reachable from this runner
+        id: reachable
+        shell: bash
+        env:
+          URL: ${{ inputs.url }}
+        run: |
+          if python -c "
+          import sys, yt_dlp
+          try:
+              with yt_dlp.YoutubeDL({'quiet': True, 'no_warnings': True}) as y:
+                  y.extract_info('$URL', download=False)
+          except Exception as e:
+              print(e); sys.exit(1)
+          "; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::YouTube refused this runner (bot check on datacentre IPs). Run this matrix on a real machine: pytest -m network"
+          fi
+
       - name: Run every quality and audio format against a live URL
+        if: steps.reachable.outputs.ok == 'true'
         env:
           QT_QPA_PLATFORM: offscreen
         run: pytest -m network -v --url "${{ inputs.url }}"
