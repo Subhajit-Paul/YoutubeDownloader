@@ -6,7 +6,7 @@ source.dir = .
 source.include_exts = py,kv
 version = 1.1.1
 
-requirements = python3,kivy==2.3.0,yt_dlp,certifi,websockets,brotli,mutagen
+requirements = python3,kivy==2.3.1,yt_dlp,certifi,websockets,brotli,mutagen
 
 orientation = portrait
 fullscreen = 0
@@ -16,6 +16,10 @@ android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,\
 android.api = 34
 android.minapi = 24
 android.ndk = 25b
+
+# ponytail: pin p4a to a release so master drift cannot break the build again.
+# Bump deliberately; unpinned master broke kivy 2.3.0 compilation in Aug 2026.
+p4a.branch = v2026.05.09
 android.gradle_dependencies =
 android.enable_androidx = True
 
