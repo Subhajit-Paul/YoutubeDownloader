@@ -92,17 +92,23 @@ jobs:
         id: find_apk
         working-directory: android
         run: |
+          set -euo pipefail
           APK=$(find bin -name "*.apk" ! -name "*unsigned*" | head -1)
           [ -n "$APK" ] || APK=$(find bin -name "*.apk" | head -1)
+          if [ -z "$APK" ]; then
+            echo "::error::No APK in android/bin — buildozer produced: $(ls bin 2>/dev/null)"
+            exit 1
+          fi
           echo "apk_path=android/$APK" >> "$GITHUB_OUTPUT"
           echo "apk_name=$(basename $APK)" >> "$GITHUB_OUTPUT"
 
-      # Reports device-compatibility and security properties of the artefact.
-      # Not --strict yet: several checks fail today and are tracked in the README.
+      # Gates the build on device-compatibility and security properties of the
+      # artefact: 16 KB alignment, target SDK, EOL TLS, debuggability, ffmpeg.
       - name: Audit APK
         run: |
+          set -o pipefail   # without this, tee's exit code hides an audit failure
           pip install androguard
-          python tools/check_apk.py "${{ steps.find_apk.outputs.apk_path }}" \
+          python tools/check_apk.py "${{ steps.find_apk.outputs.apk_path }}" --strict \
             | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Upload APK artifact

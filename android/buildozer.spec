@@ -35,6 +35,9 @@ android.gradle_dependencies =
 android.enable_androidx = True
 
 # Build both arm architectures for maximum device compatibility
+# buildozer defaults release builds to .aab; we ship sideloadable APKs.
+android.release_artifact = apk
+android.debug_artifact = apk
 android.archs = arm64-v8a, armeabi-v7a
 
 [buildozer]
