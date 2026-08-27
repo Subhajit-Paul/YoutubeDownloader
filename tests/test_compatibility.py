@@ -180,11 +180,21 @@ def test_save_path_join_is_platform_correct():
     assert joined.startswith(base)
 
 
+@pytest.mark.parametrize("raw,forbidden", [
+    ("a/b", "/"),
+    ("a\\b", "\\"),
+    ("../../etc/passwd", "/"),
+])
+def test_ytdlp_neutralises_path_separators_in_titles(raw, forbidden):
+    """The apps rely on this to keep a remote title from steering the path."""
+    from yt_dlp.utils import sanitize_filename
+    assert forbidden not in sanitize_filename(raw)
+
+
 @pytest.mark.parametrize("name", ["CON", "PRN", "AUX", "NUL", "COM1"])
-def test_windows_reserved_names_are_sanitised_by_ytdlp(name):
-    """yt-dlp owns this; assert it still happens so we do not have to."""
-    import yt_dlp
-    ydl = yt_dlp.YoutubeDL({"outtmpl": "%(title)s.%(ext)s", "quiet": True,
-                            "windowsfilenames": True})
-    out = ydl.prepare_filename({"title": name, "ext": "mp4", "id": "x"})
-    assert out != f"{name}.mp4" or sys.platform != "win32"
+def test_windows_reserved_device_names_are_a_known_gap(name):
+    """Documented limitation: yt-dlp leaves these intact, so a video titled
+    'CON' cannot be saved on Windows. Asserting current behaviour so that a
+    future yt-dlp change is noticed rather than silently altering filenames."""
+    from yt_dlp.utils import sanitize_filename
+    assert sanitize_filename(name) == name

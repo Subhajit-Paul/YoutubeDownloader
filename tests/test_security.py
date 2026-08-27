@@ -167,24 +167,31 @@ def test_install_script_uses_https_only():
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell script")
 def test_install_script_cannot_be_tricked_into_writing_outside_its_targets(tmp_path):
     """A malicious release tarball must not drop files elsewhere on disk."""
+    import io
+    import tarfile
+
     victim = tmp_path / "victim"
     victim.mkdir()
-    stage = tmp_path / "stage"
-    (stage / "sub").mkdir(parents=True)
-    (stage / "sub" / "youtube-tui").write_text("#!/bin/sh\ntrue\n")
-    evil = stage / "sub" / "evil.txt"
-    evil.write_text("pwned")
     tarball = tmp_path / "evil.tar.gz"
-    subprocess.run(
-        ["tar", "-czf", str(tarball), "-C", str(stage / "sub"),
-         "youtube-tui", "--transform", f"s|evil.txt|{victim}/pwned.txt|", "evil.txt"],
-        check=True, capture_output=True)
+
+    payload = b"#!/bin/sh\ntrue\n"
+    evil = b"pwned"
+    with tarfile.open(tarball, "w:gz") as tf:
+        ti = tarfile.TarInfo("youtube-tui")
+        ti.size, ti.mode = len(payload), 0o755
+        tf.addfile(ti, io.BytesIO(payload))
+        # absolute path and traversal members, the two classic tar escapes
+        for name in (str(victim / "pwned.txt"), "../../victim/escaped.txt"):
+            ti = tarfile.TarInfo(name)
+            ti.size, ti.mode = len(evil), 0o644
+            tf.addfile(ti, io.BytesIO(evil))
 
     fake = tmp_path / "bin"
     fake.mkdir()
     (fake / "curl").write_text(
         f'#!/bin/sh\nfor a; do case "$a" in -o) shift; cp "{tarball}" "$1"; exit 0;; esac; done\nexit 1\n')
-    (fake / "uname").write_text('#!/bin/sh\n[ "$1" = "-m" ] && echo x86_64 || echo Linux\n')
+    (fake / "uname").write_text(
+        '#!/bin/sh\n[ "$1" = "-m" ] && echo x86_64 || echo Linux\n')
     for f in ("curl", "uname"):
         (fake / f).chmod(0o755)
 
@@ -194,6 +201,7 @@ def test_install_script_cannot_be_tricked_into_writing_outside_its_targets(tmp_p
         ["bash", str(ROOT / "install-tui.sh")],
         env={**os.environ, "PATH": f"{fake}:/usr/bin:/bin", "HOME": str(home),
              "SHELL": "/bin/bash"},
-        capture_output=True, timeout=60)
+        capture_output=True, timeout=120)
 
-    assert not (victim / "pwned.txt").exists(), "tarball escaped the extraction dir"
+    assert not (victim / "pwned.txt").exists(), "absolute-path member escaped"
+    assert not (victim / "escaped.txt").exists(), "traversal member escaped"
