@@ -9,13 +9,18 @@ ALIAS_NAME="ytd"
 INSTALL_DIR="${HOME}/.local/bin"
 
 # ── Detect platform ────────────────────────────────────────────────────────────
+# Match on arch too: CI publishes only linux-x86_64 and macos-arm64, so an
+# Intel Mac or an arm64 Linux box must fail here rather than download a
+# binary it cannot execute.
 OS="$(uname -s)"
+ARCH="$(uname -m)"
 
-case "$OS" in
-  Linux*)  ASSET="youtube-tui-linux-x86_64.tar.gz" ;;
-  Darwin*) ASSET="youtube-tui-macos-arm64.tar.gz" ;;
+case "$OS/$ARCH" in
+  Linux/x86_64)         ASSET="youtube-tui-linux-x86_64.tar.gz" ;;
+  Darwin/arm64)         ASSET="youtube-tui-macos-arm64.tar.gz" ;;
   *)
-    echo "Unsupported platform: $OS" >&2
+    echo "No published build for $OS/$ARCH." >&2
+    echo "Available: Linux x86_64, macOS arm64 (Apple Silicon)." >&2
     echo "For Windows, download the .exe from: https://github.com/$REPO/releases/latest" >&2
     exit 1
     ;;

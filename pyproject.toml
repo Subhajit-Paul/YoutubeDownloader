@@ -1,7 +1,16 @@
 [project]
 name = "youtubedownloader"
-version = "0.1.0"
-description = "Add your description here"
+version = "1.2.0"
+description = "Download video and audio from YouTube — Qt desktop apps, a TUI, and an Android build."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.12"
 dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "integration: exercises real downloads over a local HTTP server",
+    "security: asserts a security property",
+]

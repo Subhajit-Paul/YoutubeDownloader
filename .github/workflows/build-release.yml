@@ -32,9 +32,9 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -46,7 +46,7 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
           else
-            echo "version=dev" >> "$GITHUB_OUTPUT"
+            echo "version=0.0.0-dev" >> "$GITHUB_OUTPUT"
           fi
 
       # ── System deps ────────────────────────────────────────────────────────
@@ -151,8 +151,8 @@ jobs:
         run: |
           $env:PATH += ";C:\Program Files (x86)\NSIS"
           New-Item -ItemType Directory -Force -Path release | Out-Null
-          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
-          makensis /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
+          makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
+          makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
           Copy-Item "dist\youtube-tui.exe" "release\youtube-tui-windows-x86_64.exe"
 
       # ── macOS: DMG ─────────────────────────────────────────────────────────
@@ -191,14 +191,14 @@ jobs:
 
       # ── Upload ─────────────────────────────────────────────────────────────
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact_suffix }}
           path: release/
 
       - name: Publish to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: release/*
           generate_release_notes: ${{ matrix.platform == 'linux' }}

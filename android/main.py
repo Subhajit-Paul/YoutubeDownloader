@@ -14,7 +14,45 @@ from kivy.uix.textinput import TextInput
 
 import yt_dlp
 
-SAVE_DIR = str(Path.home() / "Downloads" / "YouTubeDownloader")
+def _android_context():
+    from jnius import autoclass
+    return autoclass("org.kivy.android.PythonActivity").mActivity
+
+
+def _save_dir():
+    """Where downloads land.
+
+    Path.home() points at app-private storage on Android, which no file manager
+    or gallery can see. getExternalFilesDir() is user-visible under
+    Android/data/<pkg>/files, needs no runtime permission, and works on every
+    supported API level.
+    """
+    try:
+        ctx = _android_context()
+        base = ctx.getExternalFilesDir(None)
+        if base is not None:
+            return os.path.join(base.getAbsolutePath(), "YouTubeDownloader")
+    except Exception:
+        pass
+    return str(Path.home() / "Downloads" / "YouTubeDownloader")
+
+
+def _ffmpeg_location():
+    """Absolute path to the bundled ffmpeg binary, or None.
+
+    python-for-android's ffmpeg recipe installs the CLI as
+    lib/<abi>/libffmpegbin.so. The native library directory is the only place
+    Android 10+ permits executing a bundled binary from. yt-dlp matches the
+    program name as a substring, so 'libffmpegbin.so' is accepted as ffmpeg.
+    """
+    try:
+        libdir = _android_context().getApplicationInfo().nativeLibraryDir
+    except Exception:
+        return None
+    path = os.path.join(libdir, "libffmpegbin.so")
+    return path if os.path.exists(path) else None
+
+
 
 # (display label, is_video, yt-dlp format string, audio codec or None)
 _FORMATS = [
@@ -36,7 +74,8 @@ _BTN_RED  = (0.55, 0.08, 0.08, 1)
 class RootLayout(BoxLayout):
     def __init__(self, **kwargs):
         super().__init__(orientation="vertical", padding=16, spacing=8, **kwargs)
-        os.makedirs(SAVE_DIR, exist_ok=True)
+        self.save_dir = _save_dir()
+        os.makedirs(self.save_dir, exist_ok=True)
 
         self._fmt_idx = 0
         self._cancel_event = threading.Event()
@@ -213,10 +252,10 @@ class RootLayout(BoxLayout):
 
                 Clock.schedule_once(_upd)
 
-        archive = os.path.join(SAVE_DIR, ".ytdl-archive")
+        archive = os.path.join(self.save_dir, ".ytdl-archive")
         outtmpl = os.path.join(
-            SAVE_DIR,
-            "%(playlist_title&%(playlist_title)s/|)s%(title)s.%(ext)s",
+            self.save_dir,
+            "%(playlist_title&{}|)s/%(title)s.%(ext)s",
         )
         ydl_opts = {
             "format": fmt,
@@ -231,6 +270,9 @@ class RootLayout(BoxLayout):
             "ignoreerrors": True,
             "quiet": True,
         }
+        loc = _ffmpeg_location()
+        if loc:
+            ydl_opts["ffmpeg_location"] = loc
         if is_video:
             ydl_opts["merge_output_format"] = "mp4"
         elif codec:
@@ -242,9 +284,15 @@ class RootLayout(BoxLayout):
 
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([url])
+                retcode = ydl.download([url])
             if self._cancel_event.is_set():
                 Clock.schedule_once(lambda dt: self._on_cancelled())
+            elif retcode:
+                # ignoreerrors keeps playlists going past a bad item, so yt-dlp
+                # returns non-zero instead of raising. Without this the app
+                # reports success for a download that produced no file.
+                Clock.schedule_once(lambda dt: self._on_error(
+                    "Download finished with errors — some items may be missing."))
             else:
                 Clock.schedule_once(lambda dt: self._on_complete())
         except yt_dlp.utils.DownloadCancelled:
@@ -275,7 +323,7 @@ class RootLayout(BoxLayout):
     def _on_complete(self):
         self.progress_bar.value = 100
         self._set_status("Download complete!")
-        self._append_log(f"Saved to: {SAVE_DIR}")
+        self._append_log(f"Saved to: {self.save_dir}")
         self._reset_btn()
 
     def _on_cancelled(self):
