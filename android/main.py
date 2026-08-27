@@ -14,7 +14,46 @@ from kivy.uix.textinput import TextInput
 
 import yt_dlp
 
-SAVE_DIR = str(Path.home() / "Downloads" / "YouTubeDownloader")
+def _android_context():
+    from jnius import autoclass
+    return autoclass("org.kivy.android.PythonActivity").mActivity
+
+
+def _save_dir():
+    """Where downloads land.
+
+    Path.home() points at app-private storage on Android, which no file manager
+    or gallery can see. getExternalFilesDir() is user-visible under
+    Android/data/<pkg>/files, needs no runtime permission, and works on every
+    supported API level.
+    """
+    try:
+        ctx = _android_context()
+        base = ctx.getExternalFilesDir(None)
+        if base is not None:
+            return os.path.join(base.getAbsolutePath(), "YouTubeDownloader")
+    except Exception:
+        pass
+    return str(Path.home() / "Downloads" / "YouTubeDownloader")
+
+
+def _ffmpeg_location():
+    """Absolute path to the bundled ffmpeg binary, or None.
+
+    python-for-android's ffmpeg recipe installs the CLI as
+    lib/<abi>/libffmpegbin.so. The native library directory is the only place
+    Android 10+ permits executing a bundled binary from. yt-dlp matches the
+    program name as a substring, so 'libffmpegbin.so' is accepted as ffmpeg.
+    """
+    try:
+        libdir = _android_context().getApplicationInfo().nativeLibraryDir
+    except Exception:
+        return None
+    path = os.path.join(libdir, "libffmpegbin.so")
+    return path if os.path.exists(path) else None
+
+
+SAVE_DIR = _save_dir()
 
 # (display label, is_video, yt-dlp format string, audio codec or None)
 _FORMATS = [
@@ -231,6 +270,9 @@ class RootLayout(BoxLayout):
             "ignoreerrors": True,
             "quiet": True,
         }
+        loc = _ffmpeg_location()
+        if loc:
+            ydl_opts["ffmpeg_location"] = loc
         if is_video:
             ydl_opts["merge_output_format"] = "mp4"
         elif codec:

@@ -119,3 +119,39 @@ def test_archs_cover_modern_devices():
 
 def test_target_api_is_declared():
     assert int(_spec()["android.api"]) >= 34
+
+
+# ── artefact-level requirements ──────────────────────────────────────────────
+
+def test_ffmpeg_is_a_build_requirement():
+    """Every format the UI offers needs ffmpeg: the four MP4 options merge
+    separate streams, the four audio options transcode. Without the recipe the
+    APK ships none and all eight fail."""
+    reqs = {r.strip() for r in _spec()["requirements"].split(",")}
+    assert "ffmpeg" in reqs
+
+
+def test_ffmpeg_location_is_passed_to_yt_dlp():
+    assert "ffmpeg_location" in SRC, "bundled ffmpeg is never handed to yt-dlp"
+    assert "libffmpegbin.so" in SRC, (
+        "p4a installs the ffmpeg CLI under this name in the native lib dir")
+
+
+def test_ytdlp_accepts_the_bundled_binary_name():
+    """yt-dlp resolves the program by substring, so the p4a name must contain it."""
+    from yt_dlp.postprocessor.ffmpeg import FFmpegPostProcessor
+    programs = [*FFmpegPostProcessor._ffmpeg_to_avconv.keys(),
+                *FFmpegPostProcessor._ffmpeg_to_avconv.values()]
+    assert any(p in "libffmpegbin.so" for p in programs)
+
+
+def test_downloads_do_not_default_to_app_private_home():
+    """Path.home() on Android is app-private storage; no file manager sees it."""
+    assert "getExternalFilesDir" in SRC, (
+        "downloads must go somewhere the user can actually find")
+
+
+def test_p4a_is_pinned_to_a_known_ref():
+    branch = _spec().get("p4a.branch", "")
+    assert branch in {"develop"} or re.fullmatch(r"v\d{4}\.\d{2}\.\d{2}", branch), (
+        f"unexpected p4a ref {branch!r}")

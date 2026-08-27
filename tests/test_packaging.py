@@ -192,11 +192,18 @@ def _android_requirements():
     return [r.strip() for r in cp["app"]["requirements"].split(",")]
 
 
-def test_android_pins_p4a_so_master_cannot_drift():
+def test_android_pins_p4a_so_upstream_cannot_drift():
+    """A bare branch moves under us — that is how this build broke before.
+    Either a release tag or an exact commit is acceptable."""
     cp = configparser.ConfigParser()
     cp.read(ROOT / "android" / "buildozer.spec")
-    branch = cp["app"].get("p4a.branch", "")
-    assert re.fullmatch(r"v\d{4}\.\d{2}\.\d{2}", branch), "p4a must be pinned to a release"
+    app = cp["app"]
+    branch = app.get("p4a.branch", "")
+    commit = app.get("p4a.commit", "")
+    pinned_tag = re.fullmatch(r"v\d{4}\.\d{2}\.\d{2}", branch)
+    pinned_commit = re.fullmatch(r"[0-9a-f]{40}", commit)
+    assert pinned_tag or pinned_commit, (
+        f"p4a must be pinned: branch={branch!r} commit={commit!r}")
 
 
 @pytest.mark.parametrize("pkg", ["brotli", "brotlicffi", "pycryptodomex", "lxml"])

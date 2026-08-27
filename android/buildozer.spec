@@ -10,7 +10,10 @@ version = 1.1.1
 # resolves deps with --only-binary=:all: --platform=android_*, so it fails the
 # resolve and drops p4a into a source-build venv that then dies on its own pip.
 # yt-dlp only uses brotli for 'Accept-Encoding: br' and degrades without it.
-requirements = python3,kivy,yt_dlp,certifi,websockets,mutagen
+# ffmpeg: p4a's recipe builds the CLI and installs it as
+# lib/<abi>/libffmpegbin.so. Without it neither stream merging nor audio
+# extraction can run, i.e. none of the formats the UI offers would work.
+requirements = python3,kivy,yt_dlp,certifi,websockets,mutagen,ffmpeg
 
 orientation = portrait
 fullscreen = 0
@@ -23,9 +26,11 @@ android.minapi = 24
 # NDK left unpinned: p4a's default is r27+, which links 16 KB-aligned
 # native libs (required by Android 15+ devices using 16 KB pages).
 
-# ponytail: pin p4a to a release so master drift cannot break the build again.
-# Bump deliberately; unpinned master broke kivy 2.3.0 compilation in Aug 2026.
 p4a.branch = develop
+# Pinned to a commit, not a moving branch: unpinned p4a drift is what
+# broke this build before. No release tag works — the fixes for the
+# wheel-install stage landed on develop after v2026.05.09.
+p4a.commit = 9d5918bf752379f4520902524c15f794e45972b4
 android.gradle_dependencies =
 android.enable_androidx = True
 
