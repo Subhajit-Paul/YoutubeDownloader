@@ -15,7 +15,10 @@ import sys
 import zipfile
 
 # Android 15 may use 16 KB pages; 4 KB-aligned libs will not load there.
+# This is a 64-bit-only feature — 32-bit ABIs always use 4 KB pages and are
+# exempt, so only these ABI directories are checked.
 REQUIRED_ALIGN = 0x4000
+ABIS_64BIT = ("arm64-v8a", "x86_64", "riscv64")
 # Google Play's minimum target API. Raise as Google raises it.
 MIN_TARGET_SDK = 35
 # OpenSSL 1.1.1 went end-of-life 2023-09-11.
@@ -70,16 +73,17 @@ def main():
     sos = [n for n in names if n.endswith(".so")]
     check("native libs present", bool(sos), f"{len(sos)} .so files")
 
+    sos64 = [n for n in sos if any(f"/{abi}/" in n for abi in ABIS_64BIT)]
     misaligned = []
-    for n in sos:
+    for n in sos64:
         a = _load_align(z.read(n))
         if a is not None and a < REQUIRED_ALIGN:
             misaligned.append((n.split("/")[-1], hex(a)))
     check(
         "16 KB page alignment",
         not misaligned,
-        "all aligned" if not misaligned
-        else f"{len(misaligned)}/{len(sos)} libs are <16KB, e.g. "
+        f"{len(sos64)} 64-bit libs aligned (32-bit ABIs exempt)" if not misaligned
+        else f"{len(misaligned)}/{len(sos64)} 64-bit libs are <16KB, e.g. "
              + ", ".join(f"{n}={a}" for n, a in misaligned[:3]),
     )
 
