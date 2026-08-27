@@ -10,7 +10,7 @@ version = 1.1.1
 # resolves deps with --only-binary=:all: --platform=android_*, so it fails the
 # resolve and drops p4a into a source-build venv that then dies on its own pip.
 # yt-dlp only uses brotli for 'Accept-Encoding: br' and degrades without it.
-requirements = python3,kivy==2.3.1,yt_dlp,certifi,websockets,mutagen
+requirements = python3,kivy,yt_dlp,certifi,websockets,mutagen
 
 orientation = portrait
 fullscreen = 0
@@ -23,7 +23,7 @@ android.ndk = 25b
 
 # ponytail: pin p4a to a release so master drift cannot break the build again.
 # Bump deliberately; unpinned master broke kivy 2.3.0 compilation in Aug 2026.
-p4a.branch = v2026.05.09
+p4a.branch = v2024.01.21
 android.gradle_dependencies =
 android.enable_androidx = True
 
