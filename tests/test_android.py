@@ -85,3 +85,37 @@ def test_video_formats_match_the_desktop_quality_map():
 
 def test_no_hardcoded_secrets():
     assert not re.search(r"(api[_-]?key|secret|token)\s*=\s*['\"][A-Za-z0-9]{16,}", SRC, re.I)
+
+
+# ── buildozer.spec correctness ───────────────────────────────────────────────
+
+def _spec():
+    import configparser
+    cp = configparser.ConfigParser()
+    cp.read(ROOT / "android" / "buildozer.spec")
+    return cp["app"]
+
+
+def test_permission_names_have_no_stray_whitespace():
+    """A line continuation leaked indentation into the first permission, shipping
+    'android.permission. READ_MEDIA_AUDIO', which Android silently ignores."""
+    perms = _spec()["android.permissions"]
+    for p in perms.split(","):
+        assert p == p.strip(), f"permission {p!r} carries whitespace"
+        assert " " not in p.strip(), f"permission {p!r} contains a space"
+        assert p.strip(), "empty permission entry"
+
+
+def test_media_permissions_present_for_android_13_plus():
+    perms = {p.strip() for p in _spec()["android.permissions"].split(",")}
+    assert {"READ_MEDIA_AUDIO", "READ_MEDIA_VIDEO"} <= perms
+    assert "INTERNET" in perms
+
+
+def test_archs_cover_modern_devices():
+    archs = {a.strip() for a in _spec()["android.archs"].split(",")}
+    assert "arm64-v8a" in archs, "64-bit ARM is mandatory on current devices"
+
+
+def test_target_api_is_declared():
+    assert int(_spec()["android.api"]) >= 34

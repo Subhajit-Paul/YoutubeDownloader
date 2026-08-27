@@ -15,8 +15,9 @@ requirements = python3,kivy,yt_dlp,certifi,websockets,mutagen
 orientation = portrait
 fullscreen = 0
 
-android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,\
-                      READ_MEDIA_AUDIO,READ_MEDIA_VIDEO
+# Keep on one line: a continuation leaks its indentation into the first name,
+# producing 'android.permission. READ_MEDIA_AUDIO' which Android silently drops.
+android.permissions = INTERNET,WRITE_EXTERNAL_STORAGE,READ_EXTERNAL_STORAGE,READ_MEDIA_AUDIO,READ_MEDIA_VIDEO
 android.api = 34
 android.minapi = 24
 android.ndk = 25b
