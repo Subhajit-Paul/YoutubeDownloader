@@ -107,8 +107,8 @@ class _ThumbWidget(QWidget):
                     p.fillRect(
                         QRectF(filled - 16, 0, 18, self.H), grad)
         else:
-            p.fillRect(rect, QColor('#0d0d20'))
-            p.setPen(QColor('#2a2a4a'))
+            p.fillRect(rect, QColor('{_SURFACE}'))
+            p.setPen(QColor('{_BORDER}'))
             p.setFont(QFont('', 26))
             p.drawText(rect, Qt.AlignCenter, self._placeholder_text)
 
@@ -338,18 +338,15 @@ _ADV_BUFSIZE_DEFAULT = 2   # index → 1 MB
 _ADV_CHUNK_DEFAULT   = 2   # index → 10 MB
 _ADV_TIMEOUT_DEFAULT = 1   # index → 30 s
 
-_ACCENT = '#6366f1'
-_ACCENT_HOVER = '#818cf8'
-_ACCENT_DIM = '#1e1e4a'
-_BG = '#0b0b14'
-_SURFACE = '#13132a'
-_CARD = '#17172e'
-_BORDER = '#252542'
-_TEXT = '#e2e8ff'
-_MUTED = '#6b6b9a'
-_SUCCESS = '#34d399'
-_ERROR = '#f87171'
-_WARN = '#fbbf24'
+from theme import (
+    ACCENT as _ACCENT, ACCENT_HOVER as _ACCENT_HOVER, ACCENT_DIM as _ACCENT_DIM, ACCENT_PRESSED as _ACCENT_PRESSED,
+    BG as _BG, SURFACE as _SURFACE, CARD as _CARD, BORDER as _BORDER,
+    BORDER_STRONG as _BORDER_STRONG, TEXT as _TEXT, MUTED as _MUTED,
+    FAINT as _FAINT, ON_ACCENT as _ON_ACCENT,
+    SUCCESS as _SUCCESS, ERROR as _ERROR, WARNING as _WARN,
+    RADIUS_CONTROL as _R_CTL, RADIUS_CARD as _R_CARD,
+    CONTROL_HEIGHT as _H_CTL, FONT_STACK as _FONT, IDENTITY as _IDENTITY,
+)
 
 
 class YoutubeDownloaderApp(QMainWindow):
@@ -366,14 +363,16 @@ class YoutubeDownloaderApp(QMainWindow):
 
         QLineEdit {{
             background: {_SURFACE};
-            border: 1.5px solid {_BORDER};
-            border-radius: 10px;
-            padding: 11px 14px;
+            border: 1px solid {_BORDER};
+            border-radius: {_R_CTL}px;
+            padding: 12px 14px;
             color: {_TEXT};
             font-size: 14px;
             selection-background-color: {_ACCENT};
+            selection-color: {_ON_ACCENT};
         }}
-        QLineEdit:focus {{ border-color: {_ACCENT}; }}
+        QLineEdit:hover {{ border-color: {_BORDER_STRONG}; }}
+        QLineEdit:focus {{ border: 1px solid {_ACCENT}; background: {_CARD}; }}
 
         QComboBox {{
             background: {_SURFACE};
@@ -399,8 +398,8 @@ class YoutubeDownloaderApp(QMainWindow):
             color: {_TEXT};
             font-size: 13px;
         }}
-        QPushButton:hover {{ background: #1e1e38; border-color: {_ACCENT}; }}
-        QPushButton:pressed {{ background: #0d0d20; }}
+        QPushButton:hover {{ background: {_CARD}; border-color: {_ACCENT}; }}
+        QPushButton:pressed {{ background: {_SURFACE}; }}
 
         QPushButton#primary {{
             background: {_ACCENT};
@@ -413,19 +412,19 @@ class YoutubeDownloaderApp(QMainWindow):
             letter-spacing: 0.5px;
         }}
         QPushButton#primary:hover {{ background: {_ACCENT_HOVER}; }}
-        QPushButton#primary:pressed {{ background: #4338ca; }}
-        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: #3a3a6a; }}
+        QPushButton#primary:pressed {{ background: {_ACCENT_PRESSED}; }}
+        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: {_BORDER_STRONG}; }}
 
         QPushButton#cancel {{
             background: transparent;
-            border: 1.5px solid #7f1d1d;
+            border: 1.5px solid {_ERROR};
             color: {_ERROR};
             font-size: 14px;
             font-weight: bold;
             border-radius: 12px;
             padding: 13px;
         }}
-        QPushButton#cancel:hover {{ background: #2a1010; border-color: {_ERROR}; }}
+        QPushButton#cancel:hover {{ background: {_CARD}; border-color: {_ERROR}; }}
         QPushButton#cancel:disabled {{ border-color: #333; color: #555; }}
 
         QProgressBar {{
@@ -466,13 +465,24 @@ class YoutubeDownloaderApp(QMainWindow):
             background: {_ACCENT};
             border-color: {_ACCENT};
         }}
+
+        QLabel#appname {{
+            color: {_TEXT}; font-size: 15px; font-weight: 600;
+            letter-spacing: -0.2px;
+        }}
+        QLabel#version {{ color: {_FAINT}; font-size: 11px; }}
+        QLabel#empty_title {{
+            color: {_MUTED}; font-size: 14px; font-weight: 500;
+        }}
+        QLabel#empty_body {{ color: {_FAINT}; font-size: 12px; }}
     """
+
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle('YouTube Downloader')
-        self.setMinimumSize(660, 480)
-        self.resize(720, 540)
+        self.setMinimumSize(720, 560)
+        self.resize(880, 640)
         self.setWindowIcon(QIcon(resource_path('logo.png')))
         self.setStyleSheet(self._SS)
 
@@ -494,19 +504,29 @@ class YoutubeDownloaderApp(QMainWindow):
         layout.setContentsMargins(28, 20, 28, 24)
         layout.setSpacing(0)
 
-        # ── Logo banner ──────────────────────────────────────────────────────
-        logo_pix = QPixmap(resource_path('logo.png'))
-        logo_label = QLabel()
-        logo_label.setPixmap(
-            logo_pix.scaledToHeight(44, Qt.SmoothTransformation))
-        logo_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        # ── App mark ─────────────────────────────────────────────────────────
+        # Typographic, not a bitmap wordmark: the old logo.png was a novelty
+        # face that read as clip-art, and both apps shipped the *video* one.
+        ident = _IDENTITY['video']
+
+        glyph = QLabel(ident['glyph'])
+        glyph.setObjectName('appglyph')
+        glyph.setFixedSize(30, 30)
+        glyph.setAlignment(Qt.AlignCenter)
+        glyph.setStyleSheet(
+            f"background: {ident['tint']}; color: {ident['on_tint']};"
+            f"border-radius: 9px; font-size: 14px;")
+
+        name = QLabel(ident['name'])
+        name.setObjectName('appname')
 
         ver = QLabel(f'v{__version__}')
-        ver.setObjectName('muted')
-        ver.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        ver.setObjectName('version')
 
         hdr = QHBoxLayout()
-        hdr.addWidget(logo_label)
+        hdr.setSpacing(10)
+        hdr.addWidget(glyph)
+        hdr.addWidget(name)
         hdr.addStretch()
         hdr.addWidget(ver)
         layout.addLayout(hdr)
@@ -748,6 +768,30 @@ class YoutubeDownloaderApp(QMainWindow):
         self.progress_widget.hide()
         layout.addWidget(self.progress_widget)
 
+        # ── Empty state ──────────────────────────────────────────────────────
+        # The window was ~70% dead space before a link was pasted. An empty
+        # state is the app explaining itself at the only moment the user has
+        # nothing to look at.
+        self.empty = QWidget()
+        empty_l = QVBoxLayout(self.empty)
+        empty_l.setContentsMargins(0, 8, 0, 8)
+        empty_l.setSpacing(6)
+        empty_l.addStretch()
+
+        _et = QLabel('Paste a link to begin')
+        _et.setObjectName('empty_title')
+        _et.setAlignment(Qt.AlignCenter)
+        empty_l.addWidget(_et)
+
+        _eb = QLabel('Works with videos, playlists and channels.\n'
+                     'Quality options appear once the link is read.')
+        _eb.setObjectName('empty_body')
+        _eb.setAlignment(Qt.AlignCenter)
+        empty_l.addWidget(_eb)
+        empty_l.addStretch()
+
+        layout.addWidget(self.empty, 1)
+
         layout.addStretch()
 
     def _lbl(self, text):
@@ -775,6 +819,7 @@ class YoutubeDownloaderApp(QMainWindow):
     # ── State management ───────────────────────────────────────────────────────
 
     def _set_idle(self):
+        self.empty.show()
         self.card.hide()
         self.controls.hide()
         self.dl_btn.hide()
@@ -785,6 +830,7 @@ class YoutubeDownloaderApp(QMainWindow):
         self._set_status('')
 
     def _set_fetching(self):
+        self.empty.hide()
         self.card.hide()
         self.controls.hide()
         self.dl_btn.hide()
@@ -793,6 +839,7 @@ class YoutubeDownloaderApp(QMainWindow):
         self._set_status('Fetching video info…', _MUTED)
 
     def _set_ready(self, meta: dict):
+        self.empty.hide()
         self._meta = meta
         t = meta['title']
         self.title_label.setText(
@@ -815,6 +862,7 @@ class YoutubeDownloaderApp(QMainWindow):
         self._set_status('Ready to download', _SUCCESS)
 
     def _set_downloading(self):
+        self.empty.hide()
         self.controls.hide()
         self.dl_btn.hide()
         self.cancel_btn.show()

@@ -21,6 +21,7 @@ from textual.widgets import (
 
 from common import get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
+import theme as T
 import updater
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -67,151 +68,147 @@ class YTDApp(App):
     TITLE = "YouTube Downloader TUI"
     SUB_TITLE = f"v{__version__}"
 
-    CSS = """
-    Screen { background: #0d0d0d; color: #e0e0e0; }
-    Header { background: #1a1a2e; color: #ffffff; }
-    Footer { background: #1a1a2e; }
+    CSS = f"""
+    /* Tokens come from theme.py so the TUI, the video app and the audio app
+       share one palette. Previously all three used different accents. */
 
-    /* ── Layout ─────────────────────────────────────────── */
-    #body { padding: 1 2; }
+    Screen {{ background: {T.BG}; color: {T.TEXT}; overflow: hidden; }}
+    /* The default scrollbar gutter left an unstyled strip down the right edge
+       that read as a rendering fault. */
+    * {{ scrollbar-background: {T.BG}; scrollbar-color: {T.BORDER};
+         scrollbar-background-hover: {T.BG}; scrollbar-color-hover: {T.BORDER_STRONG};
+         scrollbar-size-vertical: 1; }}
+    Header {{ background: {T.BG}; color: {T.TEXT}; text-style: bold; }}
+    Footer {{ background: {T.SURFACE}; color: {T.MUTED}; }}
+    Footer > .footer-key--key {{ background: {T.SURFACE}; color: {T.ACCENT}; }}
 
-    .row {
-        height: 3;
-        margin-bottom: 1;
-    }
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    #body {{ padding: 1 3; height: 1fr; overflow: hidden; }}
 
-    .field-label {
-        width: 10;
-        color: #555;
+    .row {{ height: 3; width: 100%; margin-bottom: 1; }}
+
+    .field-label {{
+        width: 9;
+        color: {T.MUTED};
         content-align: right middle;
-        padding-right: 1;
-    }
+        padding-right: 2;
+    }}
 
-    /* ── Inputs ─────────────────────────────────────────── */
-    Input {
-        background: #1e1e1e;
-        border: tall #2e2e2e;
-        color: #f0f0f0;
+    #divider {{ height: 1; background: {T.BORDER}; margin-bottom: 1; }}
+
+    /* ── Inputs ──────────────────────────────────────────────────────────── */
+    Input {{
+        background: {T.SURFACE};
+        border: tall {T.BORDER};
+        color: {T.TEXT};
         width: 1fr;
-    }
-    Input:focus { border: tall #2979ff; }
+    }}
+    Input:focus {{ border: tall {T.ACCENT}; background: {T.CARD}; }}
 
-    /* ── Mode radio ─────────────────────────────────────── */
-    #options-row { height: 3; margin-bottom: 1; }
+    /* ── Mode + options ──────────────────────────────────────────────────── */
+    /* height: auto and explicit widths — the selects were previously clipped
+       off the right edge and never rendered at all. */
+    #options-row {{ height: 3; width: 100%; margin-bottom: 1; }}
 
-    RadioSet {
-        background: transparent;
-        border: none;
-        width: auto;
+    RadioSet {{
+        width: 26;
         height: 3;
-        margin-right: 2;
-    }
-    RadioButton { color: #555; }
-    RadioButton:focus { color: #aaa; }
-    RadioButton.-on { color: #ffffff; }
-
-    /* ── Selects ─────────────────────────────────────────── */
-    Select {
-        background: #1e1e1e;
-        border: tall #2e2e2e;
-        color: #f0f0f0;
-        width: 1fr;
-    }
-    Select:focus { border: tall #2979ff; }
-    SelectOverlay {
-        background: #1e1e1e;
-        border: tall #333;
-    }
-    SelectOverlay > .option-list--option-highlighted {
-        background: #2979ff;
-    }
-
-    /* ── Advanced section ───────────────────────────────── */
-    #adv-section { display: none; height: auto; margin-bottom: 1; }
-    #adv-section.adv-visible { display: block; }
-
-    #adv-row { height: 3; margin-bottom: 1; }
-
-    /* ── Buttons ─────────────────────────────────────────── */
-    #btn-row { height: 3; margin-bottom: 1; }
-    Button { margin-right: 1; }
-
-    Button#download-btn {
-        background: #2979ff;
-        color: #ffffff;
-        border: none;
-        min-width: 26;
-    }
-    Button#download-btn:hover { background: #448aff; }
-    Button#download-btn:disabled { background: #1a2a4a; color: #444; border: none; }
-
-    Button#cancel-btn {
-        background: #1e1e1e;
-        border: tall #c62828;
-        color: #ff5252;
-        min-width: 22;
-    }
-    Button#cancel-btn:hover { background: #2a1010; }
-    Button#cancel-btn:disabled { border: tall #333; color: #444; }
-
-    Button#log-btn {
-        background: #1e1e1e;
-        border: tall #2e2e2e;
-        color: #666;
-        min-width: 22;
-        dock: right;
-    }
-    Button#log-btn:hover { background: #282828; color: #aaa; }
-
-    Button#adv-btn {
-        background: #1e1e1e;
-        border: tall #2e2e2e;
-        color: #555;
-        min-width: 22;
-    }
-    Button#adv-btn:hover { background: #282828; color: #aaa; }
-    Button#adv-btn.active { color: #aaa; border: tall #555; }
-
-    /* ── Divider ─────────────────────────────────────────── */
-    #divider {
-        height: 1;
-        background: #1e1e1e;
-        margin-bottom: 1;
-    }
-
-    /* ── Progress section ────────────────────────────────── */
-    #progress-section {
-        height: auto;
-        padding: 0 0 1 0;
-        margin-bottom: 1;
-        display: none;
-    }
-    #progress-section.active { display: block; }
-
-    #current-row { height: 1; margin-bottom: 1; }
-    #current-label { color: #aaa; width: 1fr; }
-    #speed-label { color: #2979ff; width: auto; }
-
-    ProgressBar { width: 100%; margin-bottom: 1; }
-    ProgressBar > Bar > .bar--bar { color: #2979ff; }
-    ProgressBar > Bar > .bar--complete { color: #2979ff; }
-
-    #overall-bar { display: none; }
-    #overall-bar.active { display: block; }
-    #overall-bar > Bar > .bar--bar { color: #00e676; }
-    #overall-bar > Bar > .bar--complete { color: #00e676; }
-
-    #overall-label { color: #00e676; height: 1; display: none; }
-    #overall-label.active { display: block; }
-
-    /* ── Log ─────────────────────────────────────────────── */
-    RichLog {
-        border: solid #1e1e1e;
-        background: #080808;
+        background: {T.SURFACE};
+        border: tall {T.BORDER};
         padding: 0 1;
+        layout: horizontal;
+    }}
+    RadioSet:focus {{ border: tall {T.ACCENT}; }}
+    RadioButton {{ color: {T.MUTED}; background: transparent; width: 11; }}
+    RadioButton.-on {{ color: {T.TEXT}; text-style: bold; }}
+    RadioButton:focus {{ text-style: bold; }}
+
+    Select {{ width: 18; margin-left: 1; }}
+    Select > SelectCurrent {{
+        background: {T.SURFACE};
+        border: tall {T.BORDER};
+        color: {T.TEXT};
+    }}
+    Select:focus > SelectCurrent {{ border: tall {T.ACCENT}; }}
+    SelectOverlay {{
+        background: {T.CARD};
+        border: tall {T.BORDER_STRONG};
+        color: {T.TEXT};
+    }}
+    SelectOverlay > .option-list--option-highlighted {{
+        background: {T.ACCENT};
+        color: {T.ON_ACCENT};
+        text-style: bold;
+    }}
+
+    /* ── Actions ─────────────────────────────────────────────────────────── */
+    /* One primary action. Everything else is quiet, so the eye has a single
+       place to land. */
+    #btn-row {{ height: 3; width: 100%; margin-bottom: 1; }}
+    Button {{
+        margin-right: 2;
+        border: none;
+        height: 3;
+        background: {T.SURFACE};
+        color: {T.MUTED};
+    }}
+    Button:hover {{ background: {T.ELEVATED}; color: {T.TEXT}; }}
+
+    Button#download-btn {{
+        background: {T.ACCENT};
+        color: {T.ON_ACCENT};
+        text-style: bold;
+        width: 24;
+    }}
+    Button#download-btn:hover {{ background: {T.ACCENT_HOVER}; }}
+    Button#download-btn:disabled {{ background: {T.SURFACE}; color: {T.FAINT}; }}
+
+    Button#cancel-btn {{ width: 18; }}
+    Button#cancel-btn:disabled {{ color: {T.FAINT}; }}
+    Button#adv-btn {{ width: 20; }}
+    Button#adv-btn.active {{ color: {T.ACCENT}; text-style: bold; }}
+    Button#log-btn {{ width: 20; margin-right: 0; }}
+
+    /* ── Advanced (hidden until asked for) ───────────────────────────────── */
+    #adv-section {{ display: none; height: auto; margin-bottom: 1; }}
+    #adv-section.adv-visible {{ display: block; }}
+    #adv-row {{ height: 3; }}
+
+    /* ── Progress ────────────────────────────────────────────────────────── */
+    #progress-section {{ display: none; height: auto; margin-bottom: 1; }}
+    #progress-section.active {{ display: block; }}
+    #current-row {{ height: 1; }}
+    #current-label {{ color: {T.TEXT}; width: 1fr; }}
+    #speed-label {{ color: {T.MUTED}; width: 28; content-align: right middle; }}
+
+    ProgressBar {{ height: 1; }}
+    ProgressBar > Bar {{ width: 1fr; }}
+    ProgressBar > Bar > .bar--bar {{ color: {T.ACCENT}; background: {T.SURFACE}; }}
+    ProgressBar > Bar > .bar--complete {{ color: {T.SUCCESS}; }}
+
+    #overall-bar {{ display: none; height: 1; }}
+    #overall-bar.active {{ display: block; }}
+    #overall-bar > Bar > .bar--bar {{ color: {T.MUTED}; background: {T.SURFACE}; }}
+    #overall-bar > Bar > .bar--complete {{ color: {T.SUCCESS}; }}
+    #overall-label {{ display: none; color: {T.MUTED}; height: 1; }}
+    #overall-label.active {{ display: block; }}
+
+    /* ── Log (opt-in) ────────────────────────────────────────────────────── */
+    RichLog {{
         display: none;
-    }
-    RichLog.log-visible { display: block; }
+        height: 1fr;
+        min-height: 8;
+        background: {T.SURFACE};
+        border: tall {T.BORDER};
+        color: {T.MUTED};
+        padding: 0 1;
+    }}
+    RichLog.log-visible {{ display: block; }}
+
+    /* ── Empty state ─────────────────────────────────────────────────────── */
+    #empty {{ height: 1fr; width: 100%; content-align: center middle;
+             text-align: center; color: {T.FAINT}; }}
+    #empty.hidden {{ display: none; }}
     """
 
     BINDINGS = [
@@ -273,7 +270,7 @@ class YTDApp(App):
                 yield Button("Advanced  [ctrl+a]", id="adv-btn")
                 yield Button("Show log  [ctrl+l]", id="log-btn", variant="default")
 
-            Label(id="divider")
+            yield Label(id="divider")
 
             with Vertical(id="progress-section"):
                 with Horizontal(id="current-row"):
@@ -282,6 +279,12 @@ class YTDApp(App):
                 yield ProgressBar(total=100, id="file-bar", show_eta=False)
                 yield Label("", id="overall-label")
                 yield ProgressBar(total=100, id="overall-bar", show_eta=False)
+
+            yield Label(
+                "Paste a link above to begin\n"
+                "Works with videos, playlists and channels",
+                id="empty",
+            )
 
             yield RichLog(id="log", highlight=True, markup=True, wrap=False)
 
@@ -397,6 +400,7 @@ class YTDApp(App):
         self.query_one("#current-label", Label).update("")
         self.query_one("#speed-label", Label).update("")
         self.query_one("#progress-section").add_class("active")
+        self.query_one("#empty").add_class("hidden")
 
         mode_str = "audio" if is_audio else "video"
         cookie_str = (
