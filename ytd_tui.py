@@ -159,7 +159,7 @@ class YTDApp(App):
         border: tall #2e2e2e;
         color: #666;
         min-width: 22;
-        margin-left: auto;
+        dock: right;
     }
     Button#log-btn:hover { background: #282828; color: #aaa; }
 
@@ -218,7 +218,7 @@ class YTDApp(App):
         Binding("ctrl+d", "download", "Download", priority=True),
         Binding("ctrl+x", "cancel_dl", "Cancel", priority=True),
         Binding("ctrl+l", "toggle_log", "Toggle log"),
-        Binding("ctrl+a", "toggle_adv", "Advanced"),
+        Binding("ctrl+a", "toggle_adv", "Advanced", priority=True),
         Binding("ctrl+q", "quit", "Quit"),
     ]
 
