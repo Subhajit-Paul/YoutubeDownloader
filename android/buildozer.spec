@@ -4,7 +4,7 @@ package.name = youtubedownloader
 package.domain = com.subhajitpaul
 source.dir = .
 source.include_exts = py,kv
-version = 1.1.1
+version = 1.2.0
 
 # ponytail: no brotli - it is a C extension with no Android wheel, and p4a
 # resolves deps with --only-binary=:all: --platform=android_*, so it fails the
