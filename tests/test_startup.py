@@ -18,6 +18,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 APPS = ["ytd", "ytd_audio", "ytd_tui"]
 
 
+def _read(rel):
+    """Always decode as UTF-8.
+
+    Path.read_text() uses the locale codec, which on Windows is cp1252 — and
+    ytd.py / ytd_audio.py contain box-drawing characters. Six of these tests
+    passed everywhere but the Windows runners until they came through here.
+    """
+    return (ROOT / rel).read_text(encoding="utf-8")
+
+
 def _import_probe(module, expression):
     """Import `module` in a clean interpreter and evaluate `expression`."""
     code = f"import sys; import {module}; print(repr({expression}))"
@@ -47,14 +57,14 @@ def test_dropped_dependencies_stay_dropped(app, heavy):
 
 
 def test_qt_material_is_not_a_requirement():
-    assert "qt-material" not in (ROOT / "requirements.txt").read_text()
+    assert "qt-material" not in _read("requirements.txt")
 
 
 @pytest.mark.parametrize("spec", ["youtube-downloader.spec",
                                   "youtube-audio-downloader.spec"])
 def test_specs_exclude_unused_qt_modules(spec):
     """Every bundled module is unpacked by the bootloader on each launch."""
-    src = (ROOT / spec).read_text()
+    src = _read(spec)
     for excluded in ("PyQt5.QtWebEngine", "PyQt5.QtQml", "PyQt5.QtSql",
                      "tkinter", "qt_material"):
         assert excluded in src, f"{spec} no longer excludes {excluded}"
@@ -138,7 +148,7 @@ def test_stylesheet_has_no_universal_font_rule(app):
     matching per widget, and six of the seven families are other platforms' UI
     fonts — a fontconfig miss each. theme.apply_font resolves it once.
     """
-    src = (ROOT / f"{app}.py").read_text()
+    src = _read(f"{app}.py")
     assert "* {{ font-family:" not in src and "* { font-family:" not in src, (
         f"{app} reintroduced the universal font rule")
     assert "apply_font" in src, f"{app} no longer applies the resolved font"
@@ -168,7 +178,7 @@ def test_apply_font_picks_the_same_family_the_stack_would():
 def test_downloader_progress_bar_is_off(app):
     """quiet=True does not gate yt-dlp's progress bar; noprogress does. It was
     formatting a terminal bar per chunk that no front-end here displays."""
-    src = (ROOT / f"{app}.py").read_text()
+    src = _read(f"{app}.py")
     assert "noprogress" in src, f"{app} lets yt-dlp draw a progress bar"
 
 
@@ -182,7 +192,7 @@ def test_no_font_is_built_without_a_family(app):
     """
     import ast
 
-    tree = ast.parse((ROOT / f"{app}.py").read_text())
+    tree = ast.parse(_read(f"{app}.py"))
     bad = [
         node.lineno for node in ast.walk(tree)
         if isinstance(node, ast.Call)
