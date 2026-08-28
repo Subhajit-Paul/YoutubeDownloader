@@ -7,6 +7,7 @@ applied a theme that theme.py immediately overrode and dragged jinja2 along.
 These assertions are structural rather than timed: a wall-clock budget is flaky
 on shared CI runners, but the properties that produce the speed-up are exact.
 """
+import os
 import pathlib
 import subprocess
 import sys
@@ -20,12 +21,14 @@ APPS = ["ytd", "ytd_audio", "ytd_tui"]
 def _import_probe(module, expression):
     """Import `module` in a clean interpreter and evaluate `expression`."""
     code = f"import sys; import {module}; print(repr({expression}))"
+    # Inherit the environment and override only what matters: a hand-built env
+    # drops SYSTEMROOT/TEMP, without which Python cannot start on Windows.
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen"}
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True,
-        cwd=str(ROOT), env={"PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen",
-                            "PATH": "/usr/bin:/bin"})
+        cwd=str(ROOT), env=env)
     assert out.returncode == 0, out.stderr[-800:]
-    return out.stdout.strip()
+    return out.stdout.strip().splitlines()[-1]
 
 
 @pytest.mark.parametrize("app", APPS)
@@ -65,10 +68,11 @@ def test_import_stays_under_budget(app):
     """
     import time
     code = f"import time;t=time.perf_counter();import {app};print(time.perf_counter()-t)"
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen"}
     out = subprocess.run(
         [sys.executable, "-c", code], capture_output=True, text=True,
-        cwd=str(ROOT), env={"PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen",
-                            "PATH": "/usr/bin:/bin"})
+        cwd=str(ROOT), env=env)
     assert out.returncode == 0, out.stderr[-500:]
-    elapsed = float(out.stdout.strip()) * 1000
+    # Take the last line: a warning on stdout would otherwise break the parse.
+    elapsed = float(out.stdout.strip().splitlines()[-1]) * 1000
     assert elapsed < 900, f"{app} import took {elapsed:.0f} ms"
