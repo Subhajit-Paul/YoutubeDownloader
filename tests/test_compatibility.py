@@ -12,6 +12,13 @@ import sys
 
 import pytest
 
+# The GUI download workers live in ytd_core now, so that is where they
+# resolve yt_dlp; the TUI still owns its own. Patch where code looks it up.
+def _ydl(mod):
+    import ytd_core
+    return getattr(mod, "yt_dlp", None) or ytd_core.yt_dlp
+
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 SOURCES = sorted(ROOT.glob("*.py")) + [ROOT / "android" / "main.py"]
 
@@ -82,6 +89,7 @@ def _worker_opts(runner_name):
     from unittest import mock
     import ytd
     import ytd_audio
+    import ytd_core
 
     class Rec:
         def __call__(self, opts):
@@ -100,7 +108,7 @@ def _worker_opts(runner_name):
         w = ytd_audio.DownloadWorker("https://x/1", "/tmp/dl", "mp3", "192",
                                      use_aria2c=True, browser="Firefox")
         mod = ytd_audio
-    with mock.patch.object(mod.yt_dlp, "YoutubeDL", rec):
+    with mock.patch.object(_ydl(mod), "YoutubeDL", rec):
         w.run()
     return rec.opts
 
@@ -198,3 +206,54 @@ def test_windows_reserved_device_names_are_a_known_gap(name):
     future yt-dlp change is noticed rather than silently altering filenames."""
     from yt_dlp.utils import sanitize_filename
     assert sanitize_filename(name) == name
+
+
+# ── the shared engine stays shared ───────────────────────────────────────────
+
+def test_the_two_desktop_apps_no_longer_duplicate_the_engine():
+    """They were 89% identical line for line, and the identical part was the
+    engine — so every fix in it had to be made twice, and one of them getting
+    missed was a matter of memory rather than of design.
+
+    Asserted as structure, not a similarity percentage: the windows are allowed
+    to look alike, but neither app may carry its own copy of the workers.
+    """
+    import ast as _ast
+
+    root = pathlib.Path(__file__).resolve().parent.parent
+    shared = {"MetaWorker", "ThumbnailFetcher", "ThumbWidget"}
+    for app in ("ytd.py", "ytd_audio.py"):
+        tree = _ast.parse((root / app).read_text(encoding="utf-8"))
+        defined = {n.name for n in tree.body if isinstance(n, _ast.ClassDef)}
+        clash = defined & shared
+        assert not clash, f"{app} redefines {sorted(clash)} instead of using ytd_core"
+
+        worker = next((n for n in tree.body
+                       if isinstance(n, _ast.ClassDef) and n.name == "DownloadWorker"), None)
+        assert worker is not None, f"{app} has no DownloadWorker"
+        bases = {b.id for b in worker.bases if isinstance(b, _ast.Name)}
+        assert "BaseDownloadWorker" in bases, (
+            f"{app}'s DownloadWorker no longer builds on the shared one: {bases}")
+
+        # It may say what to download; it may not restate how.
+        methods = {n.name for n in worker.body if isinstance(n, _ast.FunctionDef)}
+        assert methods <= {"__init__", "media_opts"}, (
+            f"{app}'s worker overrides shared behaviour: "
+            f"{sorted(methods - {'__init__', 'media_opts'})}")
+
+
+@pytest.mark.parametrize("mod_name", ["ytd", "ytd_audio"])
+def test_both_apps_resolve_the_same_engine(mod_name):
+    """One worker, one stylesheet base, one set of option lists."""
+    import importlib
+
+    import ytd_core
+    mod = importlib.import_module(mod_name)
+    assert issubclass(mod.DownloadWorker, ytd_core.BaseDownloadWorker)
+    assert issubclass(mod._ThumbWidget, ytd_core.ThumbWidget)
+    assert mod.MetaWorker is ytd_core.MetaWorker
+    assert mod._fmt_dur is ytd_core.fmt_dur
+
+    window = getattr(mod, "YoutubeDownloaderApp", None) or mod.YoutubeAudioDownloaderApp
+    assert window._SS.startswith(ytd_core.BASE_SS), (
+        f"{mod_name} no longer builds its stylesheet on the shared base")

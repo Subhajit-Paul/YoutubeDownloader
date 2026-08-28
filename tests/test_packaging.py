@@ -59,12 +59,25 @@ def test_spec_builds_the_expected_binary_name(spec, entry, exe):
 
 
 @pytest.mark.parametrize("spec,entry,exe", APPS)
+def _local_imports(entry):
+    """Local modules the entry script imports, transitively."""
+    local = {p.stem for p in ROOT.glob("*.py")} - {"conftest"}
+    seen, queue = set(), [pathlib.Path(entry).stem]
+    while queue:
+        mod = queue.pop()
+        if mod in seen or mod not in local:
+            continue
+        seen.add(mod)
+        found = re.findall(r"^\s*(?:from|import)\s+(\w+)", _read(f"{mod}.py"), re.M)
+        queue.extend(found)
+    return seen
+
+
+@pytest.mark.parametrize("spec,entry,exe", APPS)
 def test_local_modules_imported_by_entry_are_declared_hidden(spec, entry, exe):
     """PyInstaller cannot always follow these; a missing one crashes only when frozen."""
-    local = {p.stem for p in ROOT.glob("*.py")} - {"conftest"}
-    imported = set(re.findall(r"^\s*(?:from|import)\s+(\w+)", _read(entry), re.M))
     spec_text = _read(spec)
-    for mod in sorted(imported & local):
+    for mod in sorted(_local_imports(entry) - {pathlib.Path(entry).stem}):
         assert mod in spec_text, f"{entry} imports {mod!r} but {spec} never mentions it"
 
 
@@ -260,9 +273,13 @@ def test_lazily_imported_modules_are_named_as_hidden_imports(spec, entry, exe):
 
     Every argument to lazy_import must therefore be named in hiddenimports.
     """
-    src = _read(entry)
-    lazy = set(re.findall(r'lazy_import\(\s*["\']([\w.]+)["\']', src))
-    assert lazy, f"{entry} no longer uses lazy_import — drop this test with it"
+    # Search the whole local import graph: the call moved out of the entry
+    # script and into ytd_core, and a guard that only looked at the entry would
+    # have gone quietly vacuous at exactly that moment.
+    lazy = set()
+    for mod in _local_imports(entry):
+        lazy |= set(re.findall(r'lazy_import\(\s*["\']([\w.]+)["\']', _read(f"{mod}.py")))
+    assert lazy, f"{entry} no longer reaches any lazy_import — drop this test with it"
     spec_src = _read(spec)
     hidden = re.search(r"hiddenimports=\(?(.*?)\)?,\s*\n\s*hookspath",
                        spec_src, re.S)

@@ -28,6 +28,7 @@ a = Analysis(
         # the startup path.
         'yt_dlp',
         'update_ui', 'updater', 'version', 'common', 'dep_check', 'theme',
+        'ytd_core',
     ],
     hookspath=[],
     hooksconfig={},

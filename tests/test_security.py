@@ -113,6 +113,7 @@ def test_hostile_video_title_cannot_escape_the_save_directory(title):
     """The title comes from the remote site; it must not steer the output path."""
     import yt_dlp
     import ytd
+    import ytd_core
     from unittest import mock
 
     class Rec:
@@ -125,7 +126,7 @@ def test_hostile_video_title_cannot_escape_the_save_directory(title):
 
     rec = Rec()
     w = ytd.DownloadWorker("https://x/1", "/tmp/dl", "Best")
-    with mock.patch.object(ytd.yt_dlp, "YoutubeDL", rec):
+    with mock.patch.object(ytd_core.yt_dlp, "YoutubeDL", rec):
         w.run()
 
     ydl = yt_dlp.YoutubeDL({"outtmpl": rec.opts["outtmpl"], "quiet": True})
@@ -140,6 +141,7 @@ def test_cookies_are_not_read_unless_the_user_opts_in():
     """Browser cookie extraction reads credentials — it must never be implicit."""
     from unittest import mock
     import ytd
+    import ytd_core
 
     class Rec:
         def __call__(self, opts):
@@ -152,7 +154,7 @@ def test_cookies_are_not_read_unless_the_user_opts_in():
     for browser in (None, "", "None"):
         rec = Rec()
         w = ytd.DownloadWorker("https://x/1", "/tmp/dl", "Best", browser=browser)
-        with mock.patch.object(ytd.yt_dlp, "YoutubeDL", rec):
+        with mock.patch.object(ytd_core.yt_dlp, "YoutubeDL", rec):
             w.run()
         assert "cookiesfrombrowser" not in rec.opts
 

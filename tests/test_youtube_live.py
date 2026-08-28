@@ -16,6 +16,13 @@ import pytest
 
 import ytd
 import ytd_audio
+import ytd_core
+
+
+# The GUI download workers live in ytd_core now, so that is where they
+# resolve yt_dlp; the TUI still owns its own.
+def _ydl(mod):
+    return getattr(mod, "yt_dlp", None) or ytd_core.yt_dlp
 
 pytestmark = [pytest.mark.network, pytest.mark.integration]
 
@@ -33,7 +40,7 @@ def capped(monkeypatch):
     from yt_dlp.utils import download_range_func
 
     def _apply(mod):
-        real = mod.yt_dlp.YoutubeDL
+        real = _ydl(mod).YoutubeDL
 
         class Capped(real):
             def __init__(self, opts, *a, **k):
@@ -41,7 +48,7 @@ def capped(monkeypatch):
                         "download_ranges": download_range_func(None, [(0, SECONDS)])}
                 super().__init__(opts, *a, **k)
 
-        monkeypatch.setattr(mod.yt_dlp, "YoutubeDL", Capped)
+        monkeypatch.setattr(_ydl(mod), "YoutubeDL", Capped)
     return _apply
 
 

@@ -8,6 +8,7 @@ import time
 import pytest
 
 import ytd
+import ytd_core
 import ytd_audio
 import ytd_tui
 
@@ -89,7 +90,7 @@ def _run_video(recorder, monkeypatch=None, **kw):
     params = dict(url="https://y/1", save_path="/tmp/dl", quality="Best")
     params.update(kw)
     w = ytd.DownloadWorker(**params)
-    with m.patch.object(ytd.yt_dlp, "YoutubeDL", recorder):
+    with m.patch.object(ytd_core.yt_dlp, "YoutubeDL", recorder):
         w.run()
     return w
 
@@ -100,7 +101,7 @@ def _run_audio(recorder, **kw):
                   audio_format="mp3", audio_quality="192")
     params.update(kw)
     w = ytd_audio.DownloadWorker(**params)
-    with m.patch.object(ytd_audio.yt_dlp, "YoutubeDL", recorder):
+    with m.patch.object(ytd_core.yt_dlp, "YoutubeDL", recorder):
         w.run()
     return w
 

@@ -17,7 +17,9 @@ SRC = MAIN.read_text(encoding="utf-8")
 TREE = ast.parse(SRC)
 
 # Every app that builds a yt-dlp output template.
-APPS_WITH_OUTTMPL = ["ytd.py", "ytd_audio.py", "ytd_tui.py", "android/main.py"]
+# The two desktop GUIs build their yt-dlp options in ytd_core now; listing
+# them here would scan files that no longer contain what this asserts on.
+APPS_WITH_OUTTMPL = ["ytd_core.py", "ytd_tui.py", "android/main.py"]
 
 
 def _outtmpl_literals(path):

@@ -1,429 +1,64 @@
 import sys
-import os
-import shutil
-import tempfile
-import threading
-import time
-from common import lazy_import
 
-# Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
-# download or metadata fetch begins.
-yt_dlp = lazy_import("yt_dlp")
-from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QLabel, QProgressBar, QComboBox,
-    QFileDialog, QFrame, QMessageBox, QSizePolicy, QGraphicsDropShadowEffect,
-    QCheckBox,
+    QFileDialog, QFrame, QGraphicsDropShadowEffect, QCheckBox,
 )
-from PyQt5.QtCore import (Qt, pyqtSignal, QObject, QThread, QTimer, QRectF,
-                          QPointF, QPropertyAnimation, QEasingCurve)
-from PyQt5.QtGui import (
-    QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor,
-    QLinearGradient, QPen,
-)
+from PyQt5.QtCore import Qt, QThread, QTimer, QPropertyAnimation, QEasingCurve
+from PyQt5.QtGui import QFont, QIcon, QPixmap, QColor
 
-from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
+from pathlib import Path
+
+from common import resource_path
 from version import __version__
+from ytd_core import (
+    BASE_SS, BaseDownloadWorker, MetaWorker, ThumbWidget, ThumbnailFetcher,
+    fmt_dur as _fmt_dur, reusable_info as _reusable_info,
+    _BROWSERS, _ARIA2C_FOUND,
+    _ADV_FRAGMENTS, _ADV_BUFSIZE, _ADV_CHUNK, _ADV_TIMEOUT,
+    _ADV_FRAG_DEFAULT, _ADV_BUFSIZE_DEFAULT, _ADV_CHUNK_DEFAULT,
+    _ADV_TIMEOUT_DEFAULT,
+)
+
+import theme as _T
+from theme import (
+    ACCENT as _ACCENT, BG as _BG, SURFACE as _SURFACE, CARD as _CARD,
+    BORDER as _BORDER, TEXT as _TEXT, MUTED as _MUTED,
+    SUCCESS as _SUCCESS, ERROR as _ERROR, WARNING as _WARN,
+    IDENTITY as _IDENTITY,
+)
+
+# ── What makes this the video app ─────────────────────────────────────────────
+
+class _ThumbWidget(ThumbWidget):
+    GLYPH = '▶'
+    OVERLAY = (10, 10, 20, 195)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def _fmt_dur(secs):
-    if not secs:
-        return ''
-    h, m, s = int(secs) // 3600, (int(secs) % 3600) // 60, int(secs) % 60
-    return f'{h}:{m:02d}:{s:02d}' if h else f'{m}:{s:02d}'
-
-
-# ── Thumbnail widget ────────────────────────────────────────────────────────────
-
-class _ThumbWidget(QWidget):
-    """Rounded thumbnail that reveals itself left-to-right as download progresses."""
-
-    W, H, R = 200, 113, 10   # width, height, corner radius
-
-    def __init__(self):
-        super().__init__()
-        self.setFixedSize(self.W, self.H)
-        self._pix = None
-        self._pct = 0.0    # 0–100
-        self._placeholder_text = '▶'
-
-    def setPixmap(self, pix: QPixmap):
-        self._pix = pix
-        self.update()
-
-    def setProgress(self, pct: float):
-        self._pct = pct
-        self.update()
-
-    def setPlaceholderText(self, t: str):
-        self._placeholder_text = t
-        self.update()
-
-    def reset(self):
-        self._pix = None
-        self._pct = 0.0
-        self._placeholder_text = '▶'
-        self.update()
-
-    def paintEvent(self, _):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        p.setRenderHint(QPainter.SmoothPixmapTransform)
-
-        rect = QRectF(0, 0, self.W, self.H)
-        clip = QPainterPath()
-        clip.addRoundedRect(rect, self.R, self.R)
-        p.setClipPath(clip)
-
-        if self._pix:
-            # Scale to fill
-            scaled = self._pix.scaled(
-                self.W, self.H,
-                Qt.KeepAspectRatioByExpanding,
-                Qt.SmoothTransformation,
-            )
-            x = (self.W - scaled.width()) // 2
-            y = (self.H - scaled.height()) // 2
-            p.drawPixmap(x, y, scaled)
-
-            # Dark overlay on un-downloaded portion (reveals left→right)
-            filled = self.W * self._pct / 100.0
-            if filled < self.W:
-                p.fillRect(
-                    QRectF(filled, 0, self.W - filled, self.H),
-                    QColor(10, 10, 20, 195),
-                )
-                # Soft gradient seam
-                if filled > 4:
-                    grad = QLinearGradient(
-                        QPointF(filled - 16, 0), QPointF(filled + 2, 0))
-                    grad.setColorAt(0, QColor(0, 0, 0, 0))
-                    grad.setColorAt(1, QColor(10, 10, 20, 195))
-                    p.fillRect(
-                        QRectF(filled - 16, 0, 18, self.H), grad)
-        else:
-            p.fillRect(rect, QColor(_T.SURFACE))
-            p.setPen(QColor(_T.FAINT))
-            glyph_font = QFont(self.font())
-            glyph_font.setPointSize(26)
-            p.setFont(glyph_font)
-            p.drawText(rect, Qt.AlignCenter, self._placeholder_text)
-
-        p.end()
+_QUALITY_MAP = {
+    'Best':  'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+    '1080p': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+    '720p':  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+    '480p':  'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
+}
 
 
-# ── Workers ────────────────────────────────────────────────────────────────────
+class DownloadWorker(BaseDownloadWorker):
+    """Muxed video: pick a capped-height mp4 stream and merge to mp4."""
 
-class MetaWorker(QObject):
-    ready = pyqtSignal(dict)
-    failed = pyqtSignal(str)
-
-    def __init__(self, url):
-        super().__init__()
-        self.url = url
-
-    def run(self):
-        try:
-            opts = {'quiet': True, 'no_warnings': True, 'extract_flat': 'in_playlist'}
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(self.url, download=False)
-            if not info:
-                self.failed.emit('Could not fetch video info.')
-                return
-            if info.get('_type') == 'playlist':
-                entries = [e for e in (info.get('entries') or []) if e]
-                count = info.get('playlist_count') or len(entries)
-                first = entries[0] if entries else {}
-                thumb = (info.get('thumbnail') or first.get('thumbnail') or
-                         next((t['url'] for t in reversed(info.get('thumbnails') or [])
-                               if t.get('url')), ''))
-                self.ready.emit({
-                    'title': info.get('title', 'Playlist'),
-                    'channel': info.get('channel') or info.get('uploader', ''),
-                    'duration': 0,
-                    'thumbnail_url': thumb,
-                    'is_playlist': True,
-                    'count': count,
-                })
-            else:
-                thumbs = info.get('thumbnails') or []
-                thumb = (info.get('thumbnail') or
-                         next((t['url'] for t in reversed(thumbs) if t.get('url')), ''))
-                self.ready.emit({
-                    '_info': info,
-                    '_url': self.url,
-                    '_fetched_at': time.monotonic(),
-                    'title': info.get('title', ''),
-                    'channel': info.get('channel') or info.get('uploader', ''),
-                    'duration': info.get('duration', 0),
-                    'thumbnail_url': thumb,
-                    'is_playlist': False,
-                    'count': 1,
-                })
-        except Exception as exc:
-            self.failed.emit(str(exc).split('\n')[0][:120])
-
-
-class ThumbnailFetcher(QObject):
-    ready = pyqtSignal(bytes)
-
-    def __init__(self, url):
-        super().__init__()
-        self.url = url
-
-    def run(self):
-        # Deferred: urllib.request costs ~17 ms (it drags in http.client,
-        # email.parser and ssl) and is not reached until metadata has arrived.
-        import urllib.request
-        try:
-            req = urllib.request.Request(
-                self.url, headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                self.ready.emit(r.read())
-        except Exception:
-            pass
-
-
-class DownloadWorker(QObject):
-    progress = pyqtSignal(dict)
-    overall = pyqtSignal(int, int)
-    postprocess = pyqtSignal(str)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
-    status = pyqtSignal(str)
-
-    def __init__(self, url, save_path, quality, browser='None',
-                 concurrent_fragments=8, buffersize=1024*1024,
-                 http_chunk_size=10*1024*1024, socket_timeout=30,
-                 use_aria2c=False, info=None):
-        super().__init__()
-        self.url = url
-        self.save_path = save_path
+    def __init__(self, url, save_path, quality, browser='None', **kw):
+        super().__init__(url, save_path, browser=browser, **kw)
         self.quality = quality
-        self.browser = browser
-        self.concurrent_fragments = concurrent_fragments
-        self.buffersize = buffersize
-        self.http_chunk_size = http_chunk_size
-        self.socket_timeout = socket_timeout
-        self.use_aria2c = use_aria2c
-        self.info = info
-        self._cancel = threading.Event()
-        self._completed = 0
-        self._total = 0
-        self._lock = threading.Lock()
-        self._last_emit = 0.0
-        self._last_file = None
 
-    def cancel(self):
-        self._cancel.set()
-
-    # yt-dlp calls this per chunk — hundreds of times a second on a fast link.
-    # Emitting a Qt signal and repainting at that rate burns CPU that would
-    # otherwise be moving bytes, and no display updates faster than ~60 Hz.
-    _EMIT_INTERVAL = 0.08
-
-    def progress_hook(self, d):
-        if self._cancel.is_set():
-            raise yt_dlp.utils.DownloadCancelled()
-        if d['status'] != 'downloading':
-            return
-        try:
-            total = d.get('total_bytes') or d.get('total_bytes_estimate') or 0
-            downloaded = d.get('downloaded_bytes', 0)
-            speed = d.get('speed') or 0
-            if not (total and speed):
-                return
-            pct = (downloaded / total) * 100
-
-            # Throttle, but never swallow an update the user must see: the
-            # final chunk (or the bar sticks below 100) and the first chunk of
-            # a new file in a playlist.
-            filename = d.get('filename', '')
-            must_emit = pct >= 100 or filename != self._last_file
-            now = time.monotonic()
-            if not must_emit and now - self._last_emit < self._EMIT_INTERVAL:
-                return
-            self._last_emit = now
-            self._last_file = filename
-            speed_mb = speed / 1_048_576
-            eta = d.get('eta', 0)
-            playlist_count = d.get('playlist_count') or 0
-            with self._lock:
-                if playlist_count:
-                    self._total = playlist_count
-            self.progress.emit({
-                'percent': pct,
-                'filename': filename,
-                'speed': speed_mb,
-                'eta': eta,
-                'playlist_index': d.get('playlist_index'),
-                'playlist_count': playlist_count or self._total,
-            })
-        except yt_dlp.utils.DownloadCancelled:
-            raise
-        except Exception:
-            pass
-
-    def postprocessor_hook(self, d):
-        if self._cancel.is_set():
-            return
-        info = d.get('info_dict', {})
-        title = info.get('title', '')
-        if d['status'] == 'started':
-            self.postprocess.emit(f'Converting: {title}…')
-        elif d['status'] == 'finished':
-            self.postprocess.emit('')
-            with self._lock:
-                self._completed += 1
-                done, total = self._completed, self._total
-            if total:
-                self.overall.emit(done, total)
-
-
-    # Metadata fetched for the preview is reusable: clicking Download otherwise
-    # pays for a second full extraction, measured at 2.0 s on YouTube before a
-    # single byte moves. Format URLs carry a 6 h expiry, so this window has a
-    # wide margin; past it, or for a playlist (whose entries are flat stubs and
-    # would be re-extracted individually anyway), we simply extract afresh.
-    INFO_MAX_AGE = 300  # seconds
-
-    def _download(self, ydl_opts):
-        """Run the download, starting from cached info when we have it.
-
-        download_with_info_file() is yt-dlp's own entry point for this, but its
-        built-in recovery only fires on a raised DownloadError — and this app
-        sets ignoreerrors, so a failure comes back as a non-zero retcode
-        instead. Expired formats look exactly like that, so the retry is ours
-        to make: extract afresh rather than report a failure we can recover
-        from. It costs a wasted attempt only on a path that was already failing.
-        """
-        if not self.info:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.download([self.url])
-
-        fd, path = tempfile.mkstemp(suffix='.info.json')
-        os.close(fd)
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                yt_dlp.utils.write_json_file(ydl.sanitize_info(self.info), path)
-                retcode = ydl.download_with_info_file(path)
-        finally:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
-        if retcode and not self._cancel.is_set():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                return ydl.download([self.url])
-        return retcode
-
-    def run(self):
-        quality_map = {
-            'Best':  'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
-            '1080p': 'bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
-            '720p':  'bv*[height<=720][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
-            '480p':  'bv*[height<=480][ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
-        }
-        archive = os.path.join(self.save_path, '.ytdl-archive')
-        outtmpl = os.path.join(
-            self.save_path,
-            '%(playlist_title&{}|)s/%(title)s.%(ext)s',
-        )
-        ydl_opts = {
-            'format': quality_map.get(self.quality, quality_map['Best']),
+    def media_opts(self):
+        return {
+            'format': _QUALITY_MAP.get(self.quality, _QUALITY_MAP['Best']),
             'merge_output_format': 'mp4',
-            'outtmpl': outtmpl,
-            'progress_hooks': [self.progress_hook],
-            'postprocessor_hooks': [self.postprocessor_hook],
-            'download_archive': archive,
-            'continuedl': True,
-            'concurrent_fragment_downloads': self.concurrent_fragments,
-            'buffersize': self.buffersize,
-            'http_chunk_size': self.http_chunk_size,
-            'socket_timeout': self.socket_timeout,
-            'retries': 10,
-            'fragment_retries': 10,
-            'ignoreerrors': True,
-            'quiet': True,
-            # quiet alone does not stop the downloader drawing a progress
-            # bar: noprogress is its gate. No console reads it here (the
-            # GUI has none, and a windowed Windows build has no stdout at
-            # all), so it was terminal formatting done per chunk for nobody.
-            'noprogress': True,
         }
-        loc = get_ffmpeg_location()
-        if loc:
-            ydl_opts['ffmpeg_location'] = loc
-        if self.browser and self.browser != 'None':
-            ydl_opts['cookiesfrombrowser'] = (_BROWSER_KEY[self.browser],)
-        if self.use_aria2c:
-            ydl_opts['external_downloader'] = 'aria2c'
-            ydl_opts['external_downloader_args'] = {
-                'aria2c': ['-x', '16', '-s', '16', '-k', '1M', '--min-split-size=1M']
-            }
-        try:
-            self.status.emit('Starting…')
-            retcode = self._download(ydl_opts)
-            if self._cancel.is_set():
-                self.error.emit('cancelled')
-            elif retcode:
-                # ignoreerrors keeps playlists going past a bad item, so yt-dlp
-                # returns non-zero instead of raising. Without this the app
-                # reports success for a download that produced no file.
-                self.error.emit('Download finished with errors — '
-                                'some items may be missing.')
-            else:
-                self.finished.emit()
-        except yt_dlp.utils.DownloadCancelled:
-            self.error.emit('cancelled')
-        except Exception as exc:
-            self.error.emit(str(exc).split('\n')[0][:200])
-
-
-
-def _reusable_info(meta, url):
-    """The info from the preview fetch, if it is safe to download from.
-
-    Reusing it skips a second full extraction — 2.0 s on YouTube, paid after
-    the user clicks Download and before any byte moves. It is only safe when
-    it describes this exact URL, is a single video (playlist entries are flat
-    stubs that get re-extracted individually anyway), and is recent enough that
-    its format URLs cannot have expired; YouTube's carry a 6 h expiry, so the
-    window below leaves a wide margin. Anything else returns None, which is
-    exactly the behaviour this app had before.
-    """
-    if not meta or meta.get('_url') != url or meta.get('is_playlist'):
-        return None
-    if time.monotonic() - meta.get('_fetched_at', 0) >= DownloadWorker.INFO_MAX_AGE:
-        return None
-    return meta.get('_info')
 
 
 # ── Main window ────────────────────────────────────────────────────────────────
-
-_BROWSERS = [
-    'None', 'Chrome', 'Firefox', 'Brave', 'Safari',
-    'Opera', 'Edge', 'Chromium', 'Vivaldi',
-]
-_BROWSER_KEY = {b: b.lower() for b in _BROWSERS if b != 'None'}
-
-# Advanced performance options
-_ADV_FRAGMENTS = [('1', 1), ('2', 2), ('4', 4), ('8', 8), ('12', 12), ('16', 16)]
-_ADV_BUFSIZE   = [('256 KB', 256*1024), ('512 KB', 512*1024),
-                  ('1 MB', 1024*1024), ('2 MB', 2*1024*1024), ('4 MB', 4*1024*1024)]
-_ADV_CHUNK     = [('1 MB', 1024*1024), ('5 MB', 5*1024*1024),
-                  ('10 MB', 10*1024*1024), ('25 MB', 25*1024*1024)]
-_ADV_TIMEOUT   = [('10 s', 10), ('30 s', 30), ('60 s', 60)]
-_ARIA2C_FOUND  = shutil.which('aria2c') is not None
-
-_ADV_FRAG_DEFAULT    = 3   # index → 8
-_ADV_BUFSIZE_DEFAULT = 2   # index → 1 MB
-_ADV_CHUNK_DEFAULT   = 2   # index → 10 MB
-_ADV_TIMEOUT_DEFAULT = 1   # index → 30 s
 
 import theme as _T
 from theme import (
@@ -439,168 +74,7 @@ from theme import (
 
 class YoutubeDownloaderApp(QMainWindow):
 
-    _SS = f"""
-        QMainWindow, QWidget#root {{ background: {_BG}; }}
-
-        QLabel {{ color: {_TEXT}; }}
-        QLabel#muted {{ color: {_MUTED}; font-size: 11px; }}
-        QLabel#section {{
-            color: {_MUTED}; font-size: 10px;
-            letter-spacing: 1.5px; text-transform: uppercase;
-        }}
-
-        QLineEdit {{
-            background: {_SURFACE};
-            border: 1px solid {_BORDER};
-            border-radius: {_R_CTL}px;
-            padding: 12px 14px;
-            color: {_TEXT};
-            font-size: 14px;
-            selection-background-color: {_ACCENT};
-            selection-color: {_ON_ACCENT};
-        }}
-        QLineEdit:hover {{ border-color: {_BORDER_STRONG}; }}
-        QLineEdit:focus {{ border: 1px solid {_ACCENT}; background: {_CARD}; }}
-
-        QComboBox {{
-            background: {_SURFACE};
-            border: 1.5px solid {_BORDER};
-            border-radius: 10px;
-            padding: 11px 14px;
-            color: {_TEXT};
-            font-size: 14px;
-        }}
-        QComboBox::drop-down {{ border: none; width: 28px; }}
-        QComboBox QAbstractItemView {{
-            background: {_SURFACE};
-            color: {_TEXT};
-            selection-background-color: {_ACCENT};
-            border: 1px solid {_BORDER};
-        }}
-
-        QPushButton {{
-            background: {_SURFACE};
-            border: 1.5px solid {_BORDER};
-            border-radius: 10px;
-            padding: 10px 18px;
-            color: {_TEXT};
-            font-size: 13px;
-        }}
-        QPushButton:hover {{ background: {_CARD}; border-color: {_ACCENT}; }}
-        QPushButton:pressed {{ background: {_SURFACE}; }}
-
-        QPushButton#primary {{
-            background: {_ACCENT};
-            border: none;
-            color: #fff;
-            font-size: 15px;
-            font-weight: bold;
-            border-radius: 12px;
-            padding: 15px;
-            letter-spacing: 0.5px;
-        }}
-        QPushButton#primary:hover {{ background: {_ACCENT_HOVER}; }}
-        QPushButton#primary:pressed {{ background: {_ACCENT_PRESSED}; }}
-        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: {_BORDER_STRONG}; }}
-
-        /* Cancelling mid-download is routine, not destructive: a full-width
-           red button made it the loudest thing on screen. Quiet by default,
-           red only on hover, where intent is already expressed. */
-        QPushButton#cancel {{
-            background: transparent;
-            border: 1px solid {_BORDER_STRONG};
-            color: {_MUTED};
-            font-size: 13px;
-            font-weight: 500;
-            border-radius: {_R_CTL}px;
-            padding: 10px 18px;
-        }}
-        QPushButton#cancel:hover {{
-            background: {_CARD}; border-color: {_ERROR}; color: {_ERROR};
-        }}
-        QPushButton#cancel:disabled {{
-            border-color: {_BORDER}; color: {_FAINT};
-        }}
-
-        /* Secondary: present, but never competing with the primary action. */
-        QPushButton#secondary {{
-            background: {_SURFACE};
-            border: 1px solid {_BORDER};
-            color: {_MUTED};
-            font-size: 13px;
-            font-weight: 500;
-            border-radius: {_R_CTL}px;
-            padding: 0 14px;
-        }}
-        QPushButton#secondary:hover {{
-            background: {_CARD}; border-color: {_BORDER_STRONG}; color: {_TEXT};
-        }}
-        QPushButton#secondary:pressed {{ background: {_SURFACE}; }}
-
-        /* The bar carries the progress; the number annotates it. */
-        QLabel#pct {{
-            color: {_TEXT}; font-size: 15px; font-weight: 600;
-            letter-spacing: -0.2px;
-        }}
-
-        QProgressBar {{
-            background: {_SURFACE};
-            border: none;
-            border-radius: 3px;
-            height: 5px;
-        }}
-        QProgressBar::chunk {{ background: {_ACCENT}; border-radius: 3px; }}
-        QProgressBar#overall::chunk {{ background: {_SUCCESS}; border-radius: 3px; }}
-
-        QFrame#card {{
-            background: {_CARD};
-            border: 1px solid {_BORDER};
-            border-radius: 14px;
-        }}
-        QFrame#divider {{ background: {_BORDER}; max-height: 1px; }}
-
-        QPushButton#adv_toggle {{
-            background: transparent;
-            border: none;
-            color: {_MUTED};
-            font-size: 11px;
-            text-align: left;
-            padding: 2px 0;
-        }}
-        QPushButton#adv_toggle:hover {{ color: {_TEXT}; }}
-
-        QCheckBox {{ color: {_MUTED}; font-size: 12px; spacing: 6px; }}
-        QCheckBox:hover {{ color: {_TEXT}; }}
-        QCheckBox::indicator {{
-            width: 14px; height: 14px;
-            border: 1.5px solid {_BORDER};
-            border-radius: 3px;
-            background: {_SURFACE};
-        }}
-        QCheckBox::indicator:checked {{
-            background: {_ACCENT};
-            border-color: {_ACCENT};
-        }}
-
-        QLabel#appname {{
-            color: {_TEXT}; font-size: 15px; font-weight: 600;
-            letter-spacing: -0.2px;
-        }}
-        QLabel#version {{ color: {_FAINT}; font-size: 11px; }}
-        QLabel#empty_title {{
-            color: {_MUTED}; font-size: 14px; font-weight: 500;
-        }}
-        QLabel#empty_body {{ color: {_FAINT}; font-size: 12px; }}
-
-        QPushButton:focus {{
-            border: 1px solid {_ACCENT};
-        }}
-        QPushButton#primary:focus {{
-            border: 2px solid {_TEXT};
-        }}
-        QComboBox:focus {{ border-color: {_ACCENT}; }}
-        QCheckBox:focus {{ color: {_TEXT}; }}
-    """
+    _SS = BASE_SS
 
 
 

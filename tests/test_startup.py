@@ -174,10 +174,13 @@ def test_apply_font_picks_the_same_family_the_stack_would():
         "apply_font resolves to a different family than the CSS stack did")
 
 
-@pytest.mark.parametrize("app", APPS)
+@pytest.mark.parametrize("app", ["ytd_core", "ytd_tui"])
 def test_downloader_progress_bar_is_off(app):
     """quiet=True does not gate yt-dlp's progress bar; noprogress does. It was
-    formatting a terminal bar per chunk that no front-end here displays."""
+    formatting a terminal bar per chunk that no front-end here displays.
+
+    ytd_core covers both desktop apps; they share one worker now.
+    """
     src = _read(f"{app}.py")
     assert "noprogress" in src, f"{app} lets yt-dlp draw a progress bar"
 
