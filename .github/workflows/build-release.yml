@@ -157,6 +157,38 @@ jobs:
       - name: Build TUI downloader
         run: pyinstaller youtube-tui.spec --noconfirm
 
+      # CI built three apps on three platforms and never started one of them.
+      # A bundle whose shared libraries cannot be resolved dies at exec time,
+      # before any Python runs — which is how a bad ICU stub presents, and the
+      # stub is only exercised on Linux outside this job.
+      - name: Smoke-launch the built apps
+        shell: bash
+        run: |
+          python tools/smoke_launch.py dist/youtube-downloader
+          python tools/smoke_launch.py dist/youtube-audio-downloader
+
+      # The ICU stub and the plugin trim both degrade to a no-op rather than to
+      # a broken build, so a missing compiler would ship a 111 MB bundle in
+      # silence. Assert the trim actually happened.
+      - name: Check the Qt payload was trimmed (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          icu=dist/youtube-downloader/_internal/PyQt5/Qt5/lib/libicudata.so.56
+          test -f "$icu" || { echo "::error::$icu is missing entirely"; exit 1; }
+          size=$(stat -c%s "$icu")
+          echo "libicudata.so.56 is $size bytes"
+          if [ "$size" -gt 1048576 ]; then
+            echo "::error::ICU was not stubbed — the real table shipped ($size bytes)"
+            exit 1
+          fi
+          total=$(du -sm dist/youtube-downloader | cut -f1)
+          echo "bundle is ${total} MB"
+          if [ "$total" -gt 100 ]; then
+            echo "::error::bundle grew to ${total} MB; it was 89 MB with ffmpeg"
+            exit 1
+          fi
+
       # ── Linux: .deb for GUI apps; tar.gz binary for TUI ───────────────────
       - name: Create Linux packages
         if: runner.os == 'Linux'
