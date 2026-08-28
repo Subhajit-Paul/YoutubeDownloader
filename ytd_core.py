@@ -15,20 +15,22 @@ import tempfile
 import threading
 import time
 
-from common import lazy_import
+from common import friendly_error, lazy_import, save_path_problem
 
 # Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
 # download or metadata fetch begins.
 yt_dlp = lazy_import("yt_dlp")
 
 from PyQt5.QtWidgets import (
-    QApplication, QFileDialog, QLabel, QMainWindow, QWidget,
+    QApplication, QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel,
+    QMainWindow, QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 from PyQt5.QtCore import (
     Qt, pyqtSignal, QObject, QRectF, QPointF, QThread, QTimer,
 )
 from PyQt5.QtGui import (
-    QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor, QLinearGradient,
+    QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPixmap, QColor,
+    QLinearGradient,
 )
 
 import theme as _T
@@ -42,7 +44,7 @@ from theme import (
     SUCCESS as _SUCCESS, ERROR as _ERROR,
     RADIUS_CONTROL as _R_CTL,
 )
-from common import get_ffmpeg_location, resource_path
+from common import get_ffmpeg_location
 
 
 # ── Options both apps offer ───────────────────────────────────────────────────
@@ -513,7 +515,7 @@ BASE_SS = f"""
         }}
         QPushButton#primary:hover {{ background: {_ACCENT_HOVER}; }}
         QPushButton#primary:pressed {{ background: {_ACCENT_PRESSED}; }}
-        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: {_BORDER_STRONG}; }}
+        QPushButton#primary:disabled {{ background: {_ACCENT_DIM}; color: {_MUTED}; }}
 
         /* Cancelling mid-download is routine, not destructive: a full-width
            red button made it the loudest thing on screen. Quiet by default,
@@ -599,10 +601,25 @@ BASE_SS = f"""
             letter-spacing: -0.2px;
         }}
         QLabel#version {{ color: {_FAINT}; font-size: 11px; }}
+        QScrollArea {{ background: {_BG}; border: none; }}
+        QScrollBar:vertical {{
+            background: {_BG}; width: 8px; margin: 0;
+        }}
+        QScrollBar::handle:vertical {{
+            background: {_BORDER_STRONG}; border-radius: 4px; min-height: 32px;
+        }}
+        QScrollBar::handle:vertical:hover {{ background: {_FAINT}; }}
+        QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+            height: 0; background: none;
+        }}
+
         QLabel#empty_title {{
             color: {_MUTED}; font-size: 14px; font-weight: 500;
         }}
-        QLabel#empty_body {{ color: {_FAINT}; font-size: 12px; }}
+        /* MUTED, not FAINT: this line carries the reason a fetch failed
+           and what to do next, and FAINT on BG is 4.25:1. */
+        QLabel#empty_body {{ color: {_MUTED}; font-size: 12px; }}
 
         QPushButton:focus {{
             border: 1px solid {_ACCENT};
@@ -629,11 +646,36 @@ class BaseWindow(QMainWindow):
     """
 
     WINDOW_TITLE = 'YouTube Downloader'
-    WINDOW_SIZE = (880, 640)
+    WINDOW_SIZE = (880, 700)   # the ready state's layout needs 615
     IDENTITY_KEY = 'video'
     ITEM_NOUN = 'videos'            # how a playlist counts its contents
     FINALISING_LABEL = 'Finalising…'
     PCT_ACTIVE_STYLE = None         # audio tints the percentage while running
+    EMPTY_TITLE = 'Paste a link to begin'
+    EMPTY_HINT = 'Works with videos, playlists and channels.'
+
+    # Qt announces an unnamed QLineEdit as "QLineEdit". The visible section
+    # labels are separate widgets, so nothing associated them with the control
+    # they describe and a screen reader had nothing to read out.
+    A11Y_NAMES = {
+        'url_input':     'YouTube URL',
+        'save_input':    'Save to folder',
+        'dl_btn':        'Start download',
+        'cancel_btn':    'Cancel download',
+        'quality_combo': 'Video quality',
+        'fmt_combo':     'Audio format',
+        'bitrate_combo': 'Audio bitrate',
+        'browser_combo': 'Cookies from browser',
+        'adv_btn':       'Advanced options',
+        'adv_frag':      'Concurrent fragments',
+        'adv_buf':       'Buffer size',
+        'adv_chunk':     'HTTP chunk size',
+        'adv_timeout':   'Socket timeout',
+        'adv_aria2c':    'Use aria2c',
+        'progress_bar':  'Download progress',
+        'overall_bar':   'Overall playlist progress',
+        'status_label':  'Status',
+    }
 
     def _build_ui(self):
         raise NotImplementedError
@@ -641,12 +683,16 @@ class BaseWindow(QMainWindow):
     def __init__(self):
             super().__init__()
             self.setWindowTitle(self.WINDOW_TITLE)
-            self.setMinimumSize(720, 560)
+            # 660, not 560: the ready state's layout genuinely needs 615 px
+            # (video) / 642 px (audio), and a minimum below that put the primary
+            # action under the fold the moment a link resolved. Only the opt-in
+            # advanced panel now scrolls.
+            self.setMinimumSize(720, 660)
             self.resize(*self.WINDOW_SIZE)
-            self.setWindowIcon(QIcon(resource_path('logo.png')))
             _app = QApplication.instance()
             if _app is not None:
                 _T.apply_font(_app)
+            self.setWindowIcon(_T.app_icon(self.IDENTITY_KEY))
             self.setStyleSheet(self._SS)
 
             self._meta = {}        # last fetched metadata dict
@@ -657,10 +703,123 @@ class BaseWindow(QMainWindow):
 
             self._build_ui()
 
+            # Enter is how a form is submitted everywhere else; the primary
+            # action had no keyboard route at all. _start_download already
+            # ignores a URL with no resolved metadata behind it.
+            self.url_input.returnPressed.connect(self._start_download)
+            # The title is elided to the measured width, so its size hint must
+            # not be allowed to push the window wider in turn.
+            self.title_label.setSizePolicy(
+                QSizePolicy.Ignored, QSizePolicy.Preferred)
+            self.save_input.editingFinished.connect(self._check_save_path)
+            for attr, name in self.A11Y_NAMES.items():
+                w = getattr(self, attr, None)
+                if w is not None:
+                    w.setAccessibleName(name)
+
+    def setCentralWidget(self, widget):
+            """Put the body in a scroll area rather than letting it overlap.
+
+            The window's minimum is 720x560, but the ready state's layout needs
+            615 px and the advanced panel pushes that to 773 — so QVBoxLayout
+            squeezed widgets past each other and the Advanced toggle drew on top
+            of the Quality selector, at the default window size, not just at the
+            minimum. Scrolling is the reflow; the minimum stays sensible and the
+            window never has to be taller than the screen.
+            """
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.NoFrame)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+            scroll.setWidget(widget)
+            super().setCentralWidget(scroll)
+
+    def _build_empty(self):
+            """The panel that fills the body when there is nothing else to show.
+
+            It is not only the idle state: fetching and a failed fetch land here
+            too, because that is the moment the window is otherwise blank and the
+            user has nothing to read. Both apps built this identically; only the
+            hint differed.
+            """
+            self.empty = QWidget()
+            box = QVBoxLayout(self.empty)
+            box.setContentsMargins(0, 8, 0, 8)
+            box.setSpacing(6)
+            box.addStretch()
+            self.empty_title = QLabel(self.EMPTY_TITLE)
+            self.empty_title.setObjectName('empty_title')
+            self.empty_title.setAlignment(Qt.AlignCenter)
+            box.addWidget(self.empty_title)
+            self.empty_body = QLabel(self.EMPTY_HINT)
+            self.empty_body.setObjectName('empty_body')
+            self.empty_body.setAlignment(Qt.AlignCenter)
+            self.empty_body.setWordWrap(True)
+            box.addWidget(self.empty_body)
+            box.addStretch()
+            return self.empty
+
+    def _show_empty(self, title, body):
+            self.empty_title.setText(title)
+            self.empty_body.setText(body)
+            self.empty.show()
+
     def _lbl(self, text):
             l = QLabel(text.upper())
             l.setObjectName('section')
             return l
+
+    def _add_advanced(self, layout):
+            """The toggle and its panel, appended to `layout`.
+
+            One row of four, not two rows of two: the ready state plus an open
+            advanced panel needed 773 px against a 700 px window, so opening it
+            pushed the primary action under the fold. Four columns bring the
+            panel to ~79 px and the whole state inside the default window.
+
+            Both apps built these 56 lines identically; the shape only has to be
+            decided once.
+            """
+            self.adv_btn = QPushButton('\u25b8  Advanced')
+            self.adv_btn.setObjectName('adv_toggle')
+            self.adv_btn.setCursor(Qt.PointingHandCursor)
+            self.adv_btn.clicked.connect(self._toggle_advanced)
+            layout.addWidget(self.adv_btn)
+
+            self.adv_panel = QWidget()
+            self.adv_panel.hide()
+            adv = QVBoxLayout(self.adv_panel)
+            adv.setContentsMargins(0, 4, 0, 0)
+            adv.setSpacing(8)
+
+            row = QHBoxLayout()
+            row.setSpacing(12)
+            for attr, label, options, default in (
+                ('adv_frag',    'Fragments',       _ADV_FRAGMENTS, _ADV_FRAG_DEFAULT),
+                ('adv_buf',     'Buffer size',     _ADV_BUFSIZE,   _ADV_BUFSIZE_DEFAULT),
+                ('adv_chunk',   'HTTP chunk size', _ADV_CHUNK,     _ADV_CHUNK_DEFAULT),
+                ('adv_timeout', 'Socket timeout',  _ADV_TIMEOUT,   _ADV_TIMEOUT_DEFAULT),
+            ):
+                col = QVBoxLayout()
+                col.setSpacing(4)
+                col.addWidget(self._lbl(label))
+                combo = QComboBox()
+                combo.addItems([o[0] for o in options])
+                combo.setCurrentIndex(default)
+                combo.setMinimumHeight(38)
+                setattr(self, attr, combo)
+                col.addWidget(combo)
+                row.addLayout(col)
+            adv.addLayout(row)
+
+            self.adv_aria2c = QCheckBox(
+                'Use aria2c (faster on high-bandwidth connections)')
+            if not _ARIA2C_FOUND:
+                self.adv_aria2c.setEnabled(False)
+                self.adv_aria2c.setText('Use aria2c  (not found in PATH)')
+            adv.addWidget(self.adv_aria2c)
+
+            layout.addWidget(self.adv_panel)
 
     def _toggle_advanced(self):
             if self.adv_panel.isVisible():
@@ -680,7 +839,7 @@ class BaseWindow(QMainWindow):
             )
 
     def _set_idle(self):
-            self.empty.show()
+            self._show_empty(self.EMPTY_TITLE, self.EMPTY_HINT)
             self.card.hide()
             self.controls.hide()
             self.dl_btn.hide()
@@ -691,20 +850,22 @@ class BaseWindow(QMainWindow):
             self._set_status('')
 
     def _set_fetching(self):
-            self.empty.hide()
+            # Hiding the empty panel here left the body blank for the second or
+            # two an extraction takes, with only an 11px status line to say why.
+            self._show_empty(
+                'Reading the link…',
+                'Fetching the title, length and available formats.')
             self.card.hide()
             self.controls.hide()
             self.dl_btn.hide()
             self.cancel_btn.hide()
             self.progress_widget.hide()
-            self._set_status('Fetching video info…', _MUTED)
+            self._set_status('')
 
     def _set_ready(self, meta: dict):
             self.empty.hide()
             self._meta = meta
-            t = meta['title']
-            self.title_label.setText(
-                t if len(t) <= 52 else t[:50] + '…')
+            self._elide_title()
             self.channel_label.setText(meta.get('channel', ''))
             parts = []
             dur = fmt_dur(meta.get('duration', 0))
@@ -731,10 +892,42 @@ class BaseWindow(QMainWindow):
             self.progress_widget.show()
             self.thumb.setProgress(0)
             self.pct_big.setText('0%')
-            if self.PCT_ACTIVE_STYLE:
-                self.pct_big.setStyleSheet(self.PCT_ACTIVE_STYLE)
+            # Unconditional: _on_done paints this success-green, and the video
+            # app has no active style to overwrite it with, so every download
+            # after the first one ran with a green 0%.
+            self.pct_big.setStyleSheet(self.PCT_ACTIVE_STYLE or '')
             self.progress_bar.setValue(0)
             self.speed_label.setText('')
+            # Otherwise "Ready to download" stays up until the worker thread
+            # emits its first status, which is after the download has begun.
+            self._set_status('Starting…', _ACCENT)
+
+    def _elide_title(self):
+            """Fit the title to the window instead of to a character count.
+
+            A hard 52-character cut truncated titles that had room to spare in a
+            wide window and still overflowed a narrow one. 56 is the layout
+            margins, 70 the card's padding and spacing.
+            """
+            title = self._meta.get('title', '')
+            if not title:
+                return
+            avail = max(160, self.width() - 56 - self.thumb.width() - 70)
+            self.title_label.setText(QFontMetrics(self.title_label.font())
+                                     .elidedText(title, Qt.ElideRight, avail))
+
+    def resizeEvent(self, event):
+            super().resizeEvent(event)
+            self._elide_title()
+
+    def keyPressEvent(self, event):
+            # Cancelling was mouse-only. Escape is what every other dialog uses.
+            if (event.key() == Qt.Key_Escape
+                    and self.cancel_btn.isVisible()
+                    and self.cancel_btn.isEnabled()):
+                self._cancel_download()
+                return
+            super().keyPressEvent(event)
 
     def _set_status(self, text: str, color: str = _MUTED):
             self.status_label.setText(text)
@@ -782,16 +975,43 @@ class BaseWindow(QMainWindow):
                 self._thumb_thread.start()
 
     def _on_meta_failed(self, msg: str):
-            self._set_status(f'⚠  {msg}', _ERROR)
+            # The raw extractor string said what broke but never what to do; the
+            # body is empty at this point anyway, so the explanation goes where
+            # the user is already looking.
             self.card.hide()
             self.controls.hide()
             self.dl_btn.hide()
+            self._show_empty('Couldn’t read that link', friendly_error(msg))
+            self._set_status('')
 
     def _on_thumb_ready(self, data: bytes):
             pix = QPixmap()
             pix.loadFromData(data)
             if not pix.isNull():
                 self.thumb.setPixmap(pix)
+
+    def _check_save_path(self):
+            """Surface a bad folder as soon as the field is left, not on Download."""
+            problem = save_path_problem(self.save_input.text())
+            if problem:
+                self._set_status(f'✗  {problem}', _ERROR)
+            elif self.status_label.text().startswith('✗'):
+                self._set_status('')
+            return problem
+
+    def _download_blocked(self):
+            """True when the download must not start, having said why.
+
+            The GUI used to discover an unwritable folder only after a metadata
+            fetch and a failed write, and reported whatever yt-dlp said about it.
+            """
+            problem = save_path_problem(self.save_input.text())
+            if problem:
+                self._set_status(f'✗  {problem}', _ERROR)
+                self.save_input.setFocus()
+                self.save_input.selectAll()
+                return True
+            return False
 
     def _browse(self):
             d = QFileDialog.getExistingDirectory(
@@ -859,7 +1079,9 @@ class BaseWindow(QMainWindow):
             self.controls.show()
             self.dl_btn.show()
             self.progress_widget.hide()
+            self.speed_label.setText('')
             if 'cancelled' in msg.lower():
                 self._set_status('Download cancelled', _WARN)
             else:
-                self._set_status(f'✗  {msg}', _ERROR)
+                # Download stays on screen, so pressing it again is the retry.
+                self._set_status(f'✗  {friendly_error(msg)}', _ERROR)

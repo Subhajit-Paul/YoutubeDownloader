@@ -7,7 +7,7 @@ import threading
 import time
 from pathlib import Path
 
-from common import lazy_import
+from common import friendly_error, lazy_import, save_path_problem
 
 # Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
 # download or metadata fetch begins.
@@ -31,9 +31,9 @@ _QUALITY_OPTS = [
     ("Best", "Best"), ("1080p", "1080p"), ("720p", "720p"), ("480p", "480p"),
 ]
 _FORMAT_OPTS = [(f, f) for f in ("mp3", "aac", "m4a", "opus", "flac", "wav")]
-_BITRATE_OPTS = [(f"{b} kbps", b) for b in ("320", "256", "192", "128", "64")]
+_BITRATE_OPTS = [(f"{b}k", b) for b in ("320", "256", "192", "128", "64")]
 _BROWSER_OPTS = [
-    ("No cookies", "none"),
+    ("None",       "none"),
     ("Chrome",     "chrome"),
     ("Firefox",    "firefox"),
     ("Brave",      "brave"),
@@ -162,10 +162,15 @@ class YTDApp(App):
     /* ── Mode + options ──────────────────────────────────────────────────── */
     /* height: auto and explicit widths — the selects were previously clipped
        off the right edge and never rendered at all. */
-    #options-row {{ height: 3; width: 100%; margin-bottom: 1; }}
+    #options-row {{ height: 3; width: 100%; }}
+    #options-labels {{ height: 1; width: 100%; }}
+    .opt-label {{ width: 1fr; padding-left: 1; color: {T.MUTED}; }}
+    /* Spacer over the mode radio, which needs no heading: "Video / Audio"
+       says what it is. */
+    #lbl-mode {{ width: 24; }}
 
     RadioSet {{
-        width: 26;
+        width: 24;
         height: 3;
         background: {T.SURFACE};
         border: tall {T.BORDER};
@@ -177,7 +182,9 @@ class YTDApp(App):
     RadioButton.-on {{ color: {T.TEXT}; text-style: bold; }}
     RadioButton:focus {{ text-style: bold; }}
 
-    Select {{ width: 18; margin-left: 1; }}
+    /* 1fr, not a fixed 18: in audio mode the row totalled 89 columns, so on an
+       80-column terminal the cookies select was cut off mid-word. */
+    Select {{ width: 1fr; margin-left: 1; }}
     Select > SelectCurrent {{
         background: {T.SURFACE};
         border: tall {T.BORDER};
@@ -217,16 +224,20 @@ class YTDApp(App):
     Button#download-btn:hover {{ background: {T.ACCENT_HOVER}; }}
     Button#download-btn:disabled {{ background: {T.SURFACE}; color: {T.FAINT}; }}
 
-    Button#cancel-btn {{ width: 18; }}
+    Button#cancel-btn {{ width: 12; }}
     Button#cancel-btn:disabled {{ color: {T.FAINT}; }}
-    Button#adv-btn {{ width: 20; }}
+    Button#adv-btn {{ width: 14; }}
     Button#adv-btn.active {{ color: {T.ACCENT}; text-style: bold; }}
-    Button#log-btn {{ width: 20; margin-right: 0; }}
+    Button#log-btn {{ width: 14; margin-right: 0; }}
 
     /* ── Advanced (hidden until asked for) ───────────────────────────────── */
     #adv-section {{ display: none; height: auto; margin-bottom: 1; }}
     #adv-section.adv-visible {{ display: block; }}
     #adv-row {{ height: 3; }}
+    /* The advanced selects show their values ("8", "1 MB", "30 s") and their
+       prompt only while blank, so the row read as four unlabelled numbers. */
+    #adv-labels {{ height: 1; }}
+    .adv-label {{ width: 1fr; padding-left: 1; color: {T.MUTED}; }}
 
     /* ── Progress ────────────────────────────────────────────────────────── */
     #progress-section {{ display: none; height: auto; margin-bottom: 1; }}
@@ -260,8 +271,10 @@ class YTDApp(App):
     RichLog.log-visible {{ display: block; }}
 
     /* ── Empty state ─────────────────────────────────────────────────────── */
+    /* MUTED, not FAINT: this panel carries failure reasons now, and FAINT on
+       BG is 4.25:1. */
     #empty {{ height: 1fr; width: 100%; content-align: center middle;
-             text-align: center; color: {T.FAINT}; }}
+             text-align: center; color: {T.MUTED}; }}
     #empty.hidden {{ display: none; }}
     """
 
@@ -305,6 +318,13 @@ class YTDApp(App):
                 yield Label("Save to", classes="field-label")
                 yield Input(str(Path.home() / "Downloads"), id="save-input")
 
+            with Horizontal(id="options-labels"):
+                yield Label("", id="lbl-mode")
+                yield Label("Quality", id="lbl-quality", classes="opt-label")
+                yield Label("Format",  id="lbl-format",  classes="opt-label")
+                yield Label("Bitrate", id="lbl-bitrate", classes="opt-label")
+                yield Label("Cookies", id="lbl-browser", classes="opt-label")
+
             with Horizontal(id="options-row"):
                 with RadioSet(id="mode-radio"):
                     yield RadioButton("Video", value=True, id="rb-video")
@@ -315,6 +335,13 @@ class YTDApp(App):
                 yield Select(_BROWSER_OPTS, id="browser-select", value="none")
 
             with Vertical(id="adv-section"):
+                with Horizontal(id="adv-labels"):
+                    yield Label("Fragments",  classes="adv-label")
+                    yield Label("Buffer",     classes="adv-label")
+                    yield Label("Chunk size", classes="adv-label")
+                    yield Label("Timeout",    classes="adv-label")
+                    if _ARIA2C_FOUND:
+                        yield Label("aria2c", classes="adv-label")
                 with Horizontal(id="adv-row"):
                     yield Select(_ADV_FRAG_OPTS,    id="adv-frag",    value="8",       prompt="Fragments")
                     yield Select(_ADV_BUF_OPTS,     id="adv-buf",     value="1048576", prompt="Buffer")
@@ -327,10 +354,13 @@ class YTDApp(App):
                     )
 
             with Horizontal(id="btn-row"):
-                yield Button("Download  [ctrl+d]", id="download-btn")
-                yield Button("Cancel  [ctrl+x]", id="cancel-btn", disabled=True)
-                yield Button("Advanced  [ctrl+a]", id="adv-btn")
-                yield Button("Show log  [ctrl+l]", id="log-btn", variant="default")
+                # Without the bracketed keys: the row was 88 columns wide, so
+                # in an 80-column terminal the last button read "Show". Every
+                # one of these keys is already spelled out in the footer.
+                yield Button("Download", id="download-btn")
+                yield Button("Cancel", id="cancel-btn", disabled=True)
+                yield Button("Advanced", id="adv-btn")
+                yield Button("Show log", id="log-btn", variant="default")
 
             yield Label(id="divider")
 
@@ -342,11 +372,7 @@ class YTDApp(App):
                 yield Label("", id="overall-label")
                 yield ProgressBar(total=100, id="overall-bar", show_eta=False)
 
-            yield Label(
-                "Paste a link above to begin\n"
-                "Works with videos, playlists and channels",
-                id="empty",
-            )
+            yield Label(self._EMPTY_TEXT, id="empty")
 
             yield RichLog(id="log", highlight=True, markup=True, wrap=False)
 
@@ -355,8 +381,7 @@ class YTDApp(App):
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def on_mount(self) -> None:
-        self.query_one("#format-select", Select).display = False
-        self.query_one("#bitrate-select", Select).display = False
+        self._set_mode(is_audio=False)
         self.query_one("#url-input", Input).focus()
 
         log = self.query_one("#log", RichLog)
@@ -370,7 +395,7 @@ class YTDApp(App):
         issues = check_deps(check_qt_material=False)
         if issues:
             log.add_class("log-visible")
-            self.query_one("#log-btn", Button).label = "Hide log  [ctrl+l]"
+            self.query_one("#log-btn", Button).label = "Hide log"
             log.write("")
             has_required = any(d['required'] for d in issues)
             if has_required:
@@ -395,10 +420,20 @@ class YTDApp(App):
 
     @on(RadioSet.Changed, "#mode-radio")
     def on_mode_changed(self, event: RadioSet.Changed) -> None:
-        is_audio = event.pressed.id == "rb-audio"
-        self.query_one("#quality-select", Select).display = not is_audio
-        self.query_one("#format-select", Select).display = is_audio
-        self.query_one("#bitrate-select", Select).display = is_audio
+        self._set_mode(is_audio=event.pressed.id == "rb-audio")
+
+    def _set_mode(self, is_audio: bool) -> None:
+        """Show the options this mode has — control and heading together.
+
+        on_mount and the radio handler each used to set the same three
+        `display` flags, so a label added to one would have gone missing in the
+        other.
+        """
+        for field, shown in (("quality", not is_audio),
+                             ("format", is_audio),
+                             ("bitrate", is_audio)):
+            self.query_one(f"#{field}-select").display = shown
+            self.query_one(f"#lbl-{field}").display = shown
 
     @on(Input.Changed, "#url-input")
     def on_url_changed(self, event: Input.Changed) -> None:
@@ -409,10 +444,17 @@ class YTDApp(App):
             self._info = None
         if not url.startswith(("http://", "https://")):
             self.query_one("#meta-card").remove_class("visible")
+            self._ui_note(self._EMPTY_TEXT)
             return
         # Debounced: fetching on every keystroke would hammer the extractor
         # while the user is still pasting.
-        self._meta_timer = self.set_timer(0.6, lambda: self._fetch_meta(url))
+        self._meta_timer = self.set_timer(0.6, lambda: self._start_fetch(url))
+
+    def _start_fetch(self, url: str) -> None:
+        # An extraction takes a second or two and used to show nothing at all,
+        # so a slow link was indistinguishable from a link the app had ignored.
+        self._ui_note("Reading the link…")
+        self._fetch_meta(url)
 
     @work(thread=True, exclusive=True, group="meta")
     def _fetch_meta(self, url: str) -> None:
@@ -423,9 +465,13 @@ class YTDApp(App):
                     "extract_flat": "in_playlist"}
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-        except Exception:
+        except Exception as exc:
+            # Swallowing this left a bad link looking exactly like a slow one,
+            # right up until Download was pressed and failed for the same reason.
+            self.call_from_thread(self._ui_meta_failed, str(exc))
             return
         if not info:
+            self.call_from_thread(self._ui_meta_failed, "")
             return
         if info.get("_type") == "playlist":
             # Playlist entries are flat stubs here and would be re-extracted
@@ -445,6 +491,23 @@ class YTDApp(App):
             channel = info.get("channel") or info.get("uploader") or ""
             sub = f"{channel} · {dur}" if channel else dur
         self.call_from_thread(self._ui_meta, info.get("title", ""), sub)
+
+    _EMPTY_TEXT = ("Paste a link above to begin\n"
+                   "Works with videos, playlists and channels")
+
+    def _ui_note(self, markup: str) -> None:
+        """Put a body-level message in the panel that fills the empty space.
+
+        The log is opt-in and hidden by default, so anything the user has to
+        read to make progress cannot live only in there.
+        """
+        note = self.query_one("#empty", Label)
+        note.update(markup)
+        note.remove_class("hidden")
+
+    def _ui_meta_failed(self, msg: str) -> None:
+        self.query_one("#meta-card").remove_class("visible")
+        self._ui_note(f"[red]✗  {friendly_error(msg)}[/]")
 
     def _ui_meta(self, title: str, sub: str) -> None:
         self.query_one("#meta-title", Label).update(title)
@@ -480,13 +543,14 @@ class YTDApp(App):
         log = self.query_one("#log", RichLog)
 
         if not url:
-            log.write("[bold red]⚠[/]  Please enter a URL.")
+            self._refuse("Paste a link above to begin.")
             return
         if not url.startswith(("http://", "https://")):
-            log.write("[bold red]⚠[/]  URL must start with http:// or https://")
+            self._refuse("That link must start with http:// or https://")
             return
-        if not save_path:
-            log.write("[bold red]⚠[/]  Please enter a save path.")
+        problem = save_path_problem(save_path)
+        if problem:
+            self._refuse(problem)
             return
 
         is_audio = self.query_one("#mode-radio", RadioSet).pressed_index == 1
@@ -528,7 +592,8 @@ class YTDApp(App):
         try:
             os.makedirs(save_path, exist_ok=True)
         except OSError as exc:
-            log.write(f"[bold red]✗[/]  Cannot create save directory: {exc}")
+            log.write(f"[bold red]✗[/]  {exc}")
+            self._refuse(friendly_error(str(exc)))
             self._reset_ui()
             return
 
@@ -541,6 +606,11 @@ class YTDApp(App):
             url, save_path, is_audio, quality, fmt, bitrate, browser,
             adv_frag, adv_buf, adv_chunk, adv_timeout, adv_aria2c, info,
         )
+
+    def _refuse(self, reason: str) -> None:
+        """Say why Download did nothing, somewhere the user is actually looking."""
+        self._ui_note(f"[bold red]✗  {reason}[/]")
+        self.query_one("#log", RichLog).write(f"[bold red]⚠[/]  {reason}")
 
     def action_cancel_dl(self) -> None:
         if self.query_one("#cancel-btn", Button).disabled:
@@ -557,21 +627,21 @@ class YTDApp(App):
         btn = self.query_one("#log-btn", Button)
         if "log-visible" in log.classes:
             log.remove_class("log-visible")
-            btn.label = "Show log  [ctrl+l]"
+            btn.label = "Show log"
         else:
             log.add_class("log-visible")
-            btn.label = "Hide log  [ctrl+l]"
+            btn.label = "Hide log"
 
     def action_toggle_adv(self) -> None:
         sec = self.query_one("#adv-section")
         btn = self.query_one("#adv-btn", Button)
         if "adv-visible" in sec.classes:
             sec.remove_class("adv-visible")
-            btn.label = "Advanced  [ctrl+a]"
+            btn.label = "Advanced"
             btn.remove_class("active")
         else:
             sec.add_class("adv-visible")
-            btn.label = "Hide adv  [ctrl+a]"
+            btn.label = "Hide adv"
             btn.add_class("active")
 
     # ── Download worker ──────────────────────────────────────────────────────
@@ -795,9 +865,14 @@ class YTDApp(App):
         self.query_one("#log", RichLog).write("[yellow]⊘  Download cancelled.[/]")
 
     def _ui_error(self, msg: str) -> None:
+        # "✗ Error" in a one-line row with the reason in a hidden log left the
+        # user nothing to act on. The reason goes on screen; the raw extractor
+        # string stays in the log as diagnostics.
         self._reset_ui()
-        self.query_one("#current-label", Label).update("[bold red]✗  Error[/]")
+        self.query_one("#current-label", Label).update("")
         self.query_one("#speed-label", Label).update("")
+        self._ui_note(f"[bold red]✗  {friendly_error(msg)}[/]\n"
+                      "[dim]Press ctrl+d to try again · ctrl+l for details[/]")
         self.query_one("#log", RichLog).write(f"[bold red]✗[/]  {msg}")
 
     def _reset_ui(self) -> None:

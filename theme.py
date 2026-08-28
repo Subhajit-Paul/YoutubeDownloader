@@ -126,3 +126,51 @@ def contrast_ratio(fg, bg):
     a, b = relative_luminance(fg), relative_luminance(bg)
     lighter, darker = max(a, b), min(a, b)
     return (lighter + 0.05) / (darker + 0.05)
+
+
+def app_icon(key, size=256):
+    """The window icon, drawn from the identity instead of loaded from a file.
+
+    logo.png is a 640x153 wordmark. Asked for a 64x64 window icon Qt returns
+    64x15, so the taskbar, the switcher and the window decoration all showed a
+    sliver — and the same sliver for both apps, which otherwise have distinct
+    marks. Drawing it keeps the icon square at every size and makes it the mark
+    the window already shows in its own header.
+
+    PyQt5 is imported inside the function so the TUI, which imports this module
+    for its palette, never pulls Qt in.
+    """
+    from PyQt5.QtCore import QRectF, Qt
+    from PyQt5.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
+
+    ident = IDENTITY[key]
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+
+    p = QPainter(pix)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setRenderHint(QPainter.TextAntialiasing)
+
+    radius = size * 0.22
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(ident["tint"]))
+    p.drawRoundedRect(QRectF(0, 0, size, size), radius, radius)
+
+    glyph = QFont(QApplicationFont())
+    glyph.setPixelSize(int(size * 0.5))
+    glyph.setBold(True)
+    p.setFont(glyph)
+    p.setPen(QColor(ident["on_tint"]))
+    p.drawText(QRectF(0, 0, size, size), Qt.AlignCenter, ident["glyph"])
+    p.end()
+
+    return QIcon(pix)
+
+
+def QApplicationFont():
+    """The resolved application font, or Qt's default if there is no app yet."""
+    from PyQt5.QtGui import QFont
+    from PyQt5.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    return app.font() if app is not None else QFont()

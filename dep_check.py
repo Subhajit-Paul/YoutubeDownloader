@@ -7,6 +7,7 @@ DepDialog     — PyQt5 styled missing-dep dialog (GUI apps only).
 import sys
 import importlib.util
 
+import theme as T
 from common import check_ffmpeg_available
 
 
@@ -58,75 +59,79 @@ try:
         QPushButton, QApplication, QFrame,
     )
 
-    _BG     = '#0b0b14'
-    _CARD   = '#17172e'
-    _BORDER = '#252542'
-    _TEXT   = '#e2e8ff'
-    _MUTED  = '#6b6b9a'
-    _ACCENT = '#6366f1'
-    _ERROR  = '#f87171'
-    _WARN   = '#fbbf24'
+    # This dialog carried its own indigo palette, so the first thing a user with
+    # no ffmpeg ever saw was a different product from the one behind it — and
+    # its two secondary greys sat at 3.9:1 and 3.5:1, under WCAG AA. Colour
+    # comes from the design system now, like everywhere else.
+    _ERROR, _WARN = T.ERROR, T.WARNING
 
     _SS = f"""
-        QDialog, QWidget {{ background: {_BG}; }}
-        QLabel {{ color: {_TEXT}; background: transparent; }}
-        QLabel#hdr  {{ font-size: 16px; font-weight: bold; }}
-        QLabel#sub  {{ font-size: 12px; color: {_MUTED}; }}
-        QLabel#dep-name {{ font-size: 13px; font-weight: bold; }}
-        QLabel#dep-reason {{ font-size: 11px; color: {_MUTED}; }}
+        QDialog, QWidget {{ background: {T.BG}; }}
+        QLabel {{ color: {T.TEXT}; background: transparent; }}
+        QLabel#hdr  {{ font-size: 16px; font-weight: 600; }}
+        QLabel#sub  {{ font-size: 12px; color: {T.MUTED}; }}
+        QLabel#dep-name {{ font-size: 13px; font-weight: 600; }}
+        QLabel#dep-reason {{ font-size: 11px; color: {T.MUTED}; }}
         QLabel#dep-cmd {{
-            background: #07071a;
-            color: #a5f3fc;
-            font-family: monospace;
+            background: {T.SURFACE};
+            color: {T.TEXT};
+            font-family: {T.MONO_STACK};
             font-size: 12px;
             padding: 6px 10px;
-            border: 1px solid {_BORDER};
+            border: 1px solid {T.BORDER};
             border-radius: 6px;
         }}
         QPushButton {{
-            background: {_CARD};
-            border: 1px solid {_BORDER};
-            border-radius: 8px;
+            background: {T.SURFACE};
+            border: 1px solid {T.BORDER};
+            border-radius: {T.RADIUS_CONTROL}px;
             padding: 8px 16px;
-            color: {_TEXT};
+            color: {T.TEXT};
             font-size: 12px;
         }}
-        QPushButton:hover {{ border-color: {_ACCENT}; }}
+        QPushButton:hover {{ border-color: {T.ACCENT}; }}
+        QPushButton:focus {{ border: 1px solid {T.ACCENT}; }}
         QPushButton#copy-btn {{
             background: transparent;
-            border: 1px solid {_BORDER};
-            color: {_MUTED};
+            border: 1px solid {T.BORDER};
+            color: {T.MUTED};
             padding: 4px 10px;
             font-size: 11px;
             min-width: 52px;
         }}
-        QPushButton#copy-btn:hover {{ color: {_TEXT}; border-color: {_ACCENT}; }}
+        QPushButton#copy-btn:hover {{ color: {T.TEXT}; border-color: {T.BORDER_STRONG}; }}
+        /* Quiet by default, red only on hover — the same rule the app's Cancel
+           button follows, so a destructive-looking control means one thing. */
         QPushButton#quit-btn {{
             background: transparent;
-            border: 1.5px solid #7f1d1d;
-            color: {_ERROR};
+            border: 1px solid {T.BORDER_STRONG};
+            color: {T.MUTED};
             font-size: 13px;
-            font-weight: bold;
+            font-weight: 500;
             padding: 10px 28px;
-            border-radius: 10px;
+            border-radius: {T.RADIUS_CONTROL}px;
         }}
-        QPushButton#quit-btn:hover {{ background: #2a1010; }}
+        QPushButton#quit-btn:hover {{
+            background: {T.CARD}; border-color: {T.ERROR}; color: {T.ERROR};
+        }}
         QPushButton#continue-btn {{
-            background: {_ACCENT};
+            background: {T.ACCENT};
             border: none;
-            color: #fff;
+            color: {T.ON_ACCENT};
             font-size: 13px;
-            font-weight: bold;
+            font-weight: 600;
             padding: 10px 28px;
-            border-radius: 10px;
+            border-radius: {T.RADIUS_CONTROL}px;
         }}
-        QPushButton#continue-btn:hover {{ background: #818cf8; }}
+        QPushButton#continue-btn:hover {{ background: {T.ACCENT_HOVER}; }}
+        QPushButton#continue-btn:pressed {{ background: {T.ACCENT_PRESSED}; }}
+        QPushButton#continue-btn:focus {{ border: 2px solid {T.TEXT}; }}
         QFrame#card {{
-            background: {_CARD};
-            border: 1px solid {_BORDER};
-            border-radius: 12px;
+            background: {T.CARD};
+            border: 1px solid {T.BORDER};
+            border-radius: {T.RADIUS_CARD}px;
         }}
-        QFrame#divider {{ background: {_BORDER}; }}
+        QFrame#divider {{ background: {T.BORDER}; }}
     """
 
     class DepDialog(QDialog):
@@ -199,12 +204,13 @@ try:
 
                 copy_btn = QPushButton('Copy')
                 copy_btn.setObjectName('copy-btn')
-                copy_btn.setFixedWidth(56)
+                copy_btn.setFixedWidth(78)
+                copy_btn.setAccessibleName(f"Copy install command for {dep['name']}")
 
                 def _make_copy(btn, text):
                     def _fn():
                         QApplication.clipboard().setText(text)
-                        btn.setText('✓')
+                        btn.setText('✓ Copied')
                     return _fn
 
                 copy_btn.clicked.connect(_make_copy(copy_btn, dep['cmd']))

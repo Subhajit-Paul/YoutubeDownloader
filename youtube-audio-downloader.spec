@@ -3,6 +3,10 @@ import os
 import shutil
 import sys
 
+# Build-time only; nothing under packaging/ is bundled.
+sys.path.insert(0, os.path.join(SPECPATH, 'packaging'))
+import qt_slim
+
 ffmpeg_binaries = []
 if sys.platform == 'win32':
     if os.path.exists('ffmpeg.exe'):
@@ -19,7 +23,10 @@ a = Analysis(
     ['ytd_audio.py'],
     pathex=[],
     binaries=ffmpeg_binaries,
-    datas=[('logo.png', '.')],
+    # The window icon is drawn from theme.IDENTITY at runtime, so the
+    # wordmark no longer has to ride along in the bundle. It is still a
+    # build input for the Windows .ico and macOS .icns.
+    datas=[],
     hiddenimports=[
         # yt-dlp reaches the app through common.lazy_import(), a runtime string
         # PyInstaller's static analysis cannot follow. It therefore stopped being
@@ -62,6 +69,15 @@ a.binaries = [b for b in a.binaries
 # Verified by deleting them from a built tree and launching it.
 a.datas = [d for d in a.datas
            if 'Qt5/translations' not in d[0].replace('\\', '/')]
+
+# The two largest remaining wins, measured on the 111.4 MB Linux bundle: ICU's
+# data table at 23.9 MB and ~2 MB of plugins for display targets and image
+# formats this app has no path to. Both degrade to a no-op rather than to a
+# broken build — see packaging/qt_slim.py.
+a.binaries, _note = qt_slim.stub_icu_data(a.binaries, os.path.join(workpath, 'qt_slim'))
+qt_slim.report(_note)
+a.binaries, _note = qt_slim.drop_unused_qt_plugins(a.binaries)
+qt_slim.report(_note)
 
 pyz = PYZ(a.pure)
 

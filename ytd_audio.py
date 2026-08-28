@@ -100,11 +100,15 @@ _COMBO_SS = f"""
 class YoutubeAudioDownloaderApp(BaseWindow):
 
     WINDOW_TITLE = 'YouTube Audio Downloader'
-    WINDOW_SIZE = (880, 660)
+    # 740: the ready state with the advanced panel open needs 737 px, and at
+    # 720 the Download button lost its last pixel to the fold.
+    WINDOW_SIZE = (880, 740)
     IDENTITY_KEY = 'audio'
     ITEM_NOUN = 'tracks'
     FINALISING_LABEL = 'Converting…'
     PCT_ACTIVE_STYLE = f'color: {_ACCENT};'
+    EMPTY_HINT = ('Works with videos, playlists and channels.\n'
+                  'Format and bitrate appear once the link is read.')
 
     _SS = BASE_SS + f"""
         QComboBox:focus {{ border-color: {_ACCENT}; }}
@@ -177,7 +181,10 @@ class YoutubeAudioDownloaderApp(BaseWindow):
         self.status_label = QLabel('')
         self.status_label.setObjectName('muted')
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.status_label.setFixedHeight(18)
+        # Wraps: a recoverable error now explains the next step here, which is
+        # longer than one clipped line.
+        self.status_label.setWordWrap(True)
+        self.status_label.setMinimumHeight(18)
         layout.addWidget(self.status_label)
         layout.addSpacing(8)
 
@@ -298,69 +305,7 @@ class YoutubeAudioDownloaderApp(BaseWindow):
         self.browser_combo.setMinimumHeight(44)
         ctrl_layout.addWidget(self.browser_combo)
 
-        # ── Advanced toggle ───────────────────────────────────────────────────
-        self.adv_btn = QPushButton('▸  Advanced')
-        self.adv_btn.setObjectName('adv_toggle')
-        self.adv_btn.setCursor(Qt.PointingHandCursor)
-        self.adv_btn.clicked.connect(self._toggle_advanced)
-        ctrl_layout.addWidget(self.adv_btn)
-
-        # ── Advanced panel (hidden by default) ────────────────────────────────
-        self.adv_panel = QWidget()
-        self.adv_panel.hide()
-        adv = QVBoxLayout(self.adv_panel)
-        adv.setContentsMargins(0, 4, 0, 0)
-        adv.setSpacing(8)
-
-        row1 = QHBoxLayout(); row1.setSpacing(12)
-        fc = QVBoxLayout(); fc.setSpacing(4)
-        fc.addWidget(self._lbl('Fragments'))
-        self.adv_frag = QComboBox()
-        self.adv_frag.addItems([x[0] for x in _ADV_FRAGMENTS])
-        self.adv_frag.setCurrentIndex(_ADV_FRAG_DEFAULT)
-        self.adv_frag.setMinimumHeight(38)
-        fc.addWidget(self.adv_frag)
-        row1.addLayout(fc)
-
-        bc = QVBoxLayout(); bc.setSpacing(4)
-        bc.addWidget(self._lbl('Buffer size'))
-        self.adv_buf = QComboBox()
-        self.adv_buf.addItems([x[0] for x in _ADV_BUFSIZE])
-        self.adv_buf.setCurrentIndex(_ADV_BUFSIZE_DEFAULT)
-        self.adv_buf.setMinimumHeight(38)
-        bc.addWidget(self.adv_buf)
-        row1.addLayout(bc)
-
-        adv.addLayout(row1)
-
-        row2 = QHBoxLayout(); row2.setSpacing(12)
-        cc = QVBoxLayout(); cc.setSpacing(4)
-        cc.addWidget(self._lbl('HTTP chunk size'))
-        self.adv_chunk = QComboBox()
-        self.adv_chunk.addItems([x[0] for x in _ADV_CHUNK])
-        self.adv_chunk.setCurrentIndex(_ADV_CHUNK_DEFAULT)
-        self.adv_chunk.setMinimumHeight(38)
-        cc.addWidget(self.adv_chunk)
-        row2.addLayout(cc)
-
-        tc = QVBoxLayout(); tc.setSpacing(4)
-        tc.addWidget(self._lbl('Socket timeout'))
-        self.adv_timeout = QComboBox()
-        self.adv_timeout.addItems([x[0] for x in _ADV_TIMEOUT])
-        self.adv_timeout.setCurrentIndex(_ADV_TIMEOUT_DEFAULT)
-        self.adv_timeout.setMinimumHeight(38)
-        tc.addWidget(self.adv_timeout)
-        row2.addLayout(tc)
-
-        adv.addLayout(row2)
-
-        self.adv_aria2c = QCheckBox('Use aria2c (faster on high-bandwidth connections)')
-        if not _ARIA2C_FOUND:
-            self.adv_aria2c.setEnabled(False)
-            self.adv_aria2c.setText('Use aria2c  (not found in PATH)')
-        adv.addWidget(self.adv_aria2c)
-
-        ctrl_layout.addWidget(self.adv_panel)
+        self._add_advanced(ctrl_layout)
 
         self.controls.hide()
         layout.addWidget(self.controls)
@@ -431,25 +376,7 @@ class YoutubeAudioDownloaderApp(BaseWindow):
         # The window was ~70% dead space before a link was pasted. An empty
         # state is the app explaining itself at the only moment the user has
         # nothing to look at.
-        self.empty = QWidget()
-        empty_l = QVBoxLayout(self.empty)
-        empty_l.setContentsMargins(0, 8, 0, 8)
-        empty_l.setSpacing(6)
-        empty_l.addStretch()
-
-        _et = QLabel('Paste a link to begin')
-        _et.setObjectName('empty_title')
-        _et.setAlignment(Qt.AlignCenter)
-        empty_l.addWidget(_et)
-
-        _eb = QLabel('Works with videos, playlists and channels.\n'
-                     'Format and bitrate appear once the link is read.')
-        _eb.setObjectName('empty_body')
-        _eb.setAlignment(Qt.AlignCenter)
-        empty_l.addWidget(_eb)
-        empty_l.addStretch()
-
-        layout.addWidget(self.empty, 1)
+        layout.addWidget(self._build_empty(), 1)
 
         layout.addStretch()
 
@@ -465,6 +392,8 @@ class YoutubeAudioDownloaderApp(BaseWindow):
     def _start_download(self):
         url = self.url_input.text().strip()
         if not url or not self._meta:
+            return
+        if self._download_blocked():
             return
         info = _reusable_info(self._meta, url)
         self._set_downloading()

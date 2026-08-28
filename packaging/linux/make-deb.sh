@@ -32,9 +32,17 @@ chmod 755 "${PKG}/usr/bin/${APP}"
 # Desktop entry
 install -m 644 "packaging/linux/${APP}.desktop" "${PKG}/usr/share/applications/"
 
-# Icon
-if [ -f logo.png ]; then
-  install -m 644 logo.png "${PKG}/usr/share/icons/hicolor/256x256/apps/${APP}.png"
+# Icon. Rendered square at the size the directory name promises — logo.png is a
+# 640x153 wordmark, so installing it here handed the desktop a sliver, and the
+# same sliver for both apps. Falls back to it only if Qt is unavailable.
+case "${APP}" in
+  *audio*) IDENT=audio ;;
+  *)       IDENT=video ;;
+esac
+ICON="${PKG}/usr/share/icons/hicolor/256x256/apps/${APP}.png"
+if ! python3 tools/make-icon.py "${IDENT}" 256 "${ICON}"; then
+  echo "make-icon failed; falling back to the wordmark" >&2
+  [ -f logo.png ] && install -m 644 logo.png "${ICON}"
 fi
 
 cat > "${PKG}/DEBIAN/control" <<EOF

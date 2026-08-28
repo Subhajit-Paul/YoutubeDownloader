@@ -10,60 +10,67 @@ from PyQt5.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout,
 )
 
+import theme as T
 import updater
 from version import __version__
 
-_DIALOG_STYLE = """
-    QDialog {
-        background-color: #0f1117;
-    }
-    QLabel {
-        color: #e0e0e0;
+# This dialog was teal — a third palette in a product that had already agreed on
+# one, so the update prompt read as another application's window appearing over
+# yours. Its "You are running vX" line was also 4.2:1 and its disabled primary
+# 1.6:1, both under WCAG AA.
+_DIALOG_STYLE = f"""
+    QDialog {{
+        background-color: {T.BG};
+    }}
+    QLabel {{
+        color: {T.TEXT};
         font-size: 13px;
-    }
-    QLabel#title {
-        color: #ffffff;
+    }}
+    QLabel#title {{
+        color: {T.TEXT};
         font-size: 15px;
-        font-weight: bold;
-    }
-    QLabel#meta {
-        color: #777;
+        font-weight: 600;
+    }}
+    QLabel#meta {{
+        color: {T.MUTED};
         font-size: 12px;
-    }
-    QLabel#status {
-        color: #9e9e9e;
+    }}
+    QLabel#status {{
+        color: {T.MUTED};
         font-size: 12px;
-    }
-    QProgressBar {
-        background-color: #1a1a2e;
+    }}
+    QProgressBar {{
+        background-color: {T.SURFACE};
         border: none;
         border-radius: 4px;
         height: 6px;
-    }
-    QProgressBar::chunk {
-        background-color: #00b0ff;
+    }}
+    QProgressBar::chunk {{
+        background-color: {T.ACCENT};
         border-radius: 4px;
-    }
-    QPushButton {
-        background-color: #1a1a2e;
-        border: 1px solid #2a2a3e;
-        border-radius: 8px;
+    }}
+    QPushButton {{
+        background-color: {T.SURFACE};
+        border: 1px solid {T.BORDER};
+        border-radius: {T.RADIUS_CONTROL}px;
         padding: 9px 18px;
-        color: #f0f0f0;
+        color: {T.TEXT};
         font-size: 13px;
-    }
-    QPushButton:hover { background-color: #22223e; border-color: #444; }
-    QPushButton:pressed { background-color: #111; }
-    QPushButton#primary {
-        background-color: #00838f;
+    }}
+    QPushButton:hover {{ background-color: {T.CARD}; border-color: {T.BORDER_STRONG}; }}
+    QPushButton:pressed {{ background-color: {T.SURFACE}; }}
+    QPushButton:focus {{ border: 1px solid {T.ACCENT}; }}
+    QPushButton#primary {{
+        background-color: {T.ACCENT};
         border: none;
-        color: #fff;
-        font-weight: bold;
-    }
-    QPushButton#primary:hover { background-color: #00acc1; }
-    QPushButton#primary:pressed { background-color: #005662; }
-    QPushButton#primary:disabled { background-color: #0a2a2e; color: #444; }
-    QFrame#divider { background-color: #1e1e2e; max-height: 1px; }
+        color: {T.ON_ACCENT};
+        font-weight: 600;
+    }}
+    QPushButton#primary:hover {{ background-color: {T.ACCENT_HOVER}; }}
+    QPushButton#primary:pressed {{ background-color: {T.ACCENT_PRESSED}; }}
+    QPushButton#primary:disabled {{ background-color: {T.ACCENT_DIM}; color: {T.MUTED}; }}
+    QPushButton#primary:focus {{ border: 2px solid {T.TEXT}; }}
+    QFrame#divider {{ background-color: {T.BORDER}; max-height: 1px; }}
 """
 
 
@@ -138,6 +145,7 @@ class UpdateDialog(QDialog):
         self._btn = QPushButton("Download && Install")
         self._btn.setObjectName("primary")
         self._btn.setMinimumHeight(40)
+        self._btn.setDefault(True)
         self._btn.clicked.connect(self._start)
         row.addWidget(self._btn)
         later = QPushButton("Later")
@@ -174,7 +182,7 @@ class UpdateDialog(QDialog):
 
     def _on_done(self, path):
         self._bar.setValue(100)
-        self._status.setStyleSheet("color: #00e676; font-size: 12px;")
+        self._status.setStyleSheet(f"color: {T.SUCCESS}; font-size: 12px;")
         updater.launch_installer(path)
         if sys.platform == "win32":
             self._status.setText("Installer running — close this app when prompted.")
@@ -188,10 +196,23 @@ class UpdateDialog(QDialog):
         self._btn.clicked.connect(self.accept)
 
     def _on_error(self, err):
-        self._status.setStyleSheet("color: #ff5252; font-size: 12px;")
-        self._status.setText("Download failed — opening release page.")
+        self._status.setStyleSheet(f"color: {T.ERROR}; font-size: 12px;")
+        self._status.setText(
+            "Couldn't download the update. Check your connection, or get it "
+            "from the release page.")
+        self._status.setWordWrap(True)
+        self._status.show()
+        self._bar.hide()
+        # Was: report and reject() in the same breath, so the message never
+        # stayed on screen, and a browser window opened without being asked for.
+        self._btn.setEnabled(True)
+        self._btn.setText("Open release page")
+        self._btn.clicked.disconnect()
+        self._btn.clicked.connect(self._open_release)
+
+    def _open_release(self):
         webbrowser.open(self._html)
-        self.reject()
+        self.accept()
 
 
 def start_update_check(parent, app_slug):
