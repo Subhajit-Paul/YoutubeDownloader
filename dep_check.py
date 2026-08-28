@@ -26,7 +26,12 @@ def check_deps(check_qt_material: bool = False) -> list:
     """
     missing = []
 
-    if importlib.util.find_spec('yt_dlp') is None:
+    # find_spec() short-circuits on sys.modules and reads __spec__, which on a
+    # LazyLoader module triggers the very import lazy_import deferred: 55 ms and
+    # 68 submodules, paid right before the first window paint. Presence in
+    # sys.modules already means importable — lazy_import only records it there
+    # when find_spec succeeded.
+    if 'yt_dlp' not in sys.modules and importlib.util.find_spec('yt_dlp') is None:
         missing.append({
             'name': 'yt-dlp',
             'reason': 'Core download engine — required for all downloads.',

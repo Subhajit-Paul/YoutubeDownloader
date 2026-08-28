@@ -21,7 +21,15 @@ a = Analysis(
     pathex=[],
     binaries=ffmpeg_binaries,
     datas=[('logo.png', '.')],
-    hiddenimports=['update_ui', 'updater', 'version', 'common', 'dep_check', 'theme'],
+    hiddenimports=[
+        # yt-dlp reaches the app through common.lazy_import(), a runtime string
+        # PyInstaller's static analysis cannot follow. It therefore stopped being
+        # bundled and the shipped app reported it missing with downloads
+        # disabled. Naming it here packages it; lazy_import still keeps it off
+        # the startup path.
+        'yt_dlp',
+        'update_ui', 'updater', 'version', 'common', 'dep_check', 'theme',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

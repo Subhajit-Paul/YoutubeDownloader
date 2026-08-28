@@ -69,6 +69,30 @@ FONT_STACK = ('-apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, '
 MONO_STACK = ('"SF Mono", "Cascadia Code", "JetBrains Mono", Consolas, '
               '"Liberation Mono", monospace')
 
+
+def apply_font(app):
+    """Resolve FONT_STACK once and set it as the application font.
+
+    Handing the whole stack to Qt — as `* { font-family: ... }` did — makes it
+    re-run family matching for every widget, and six of the seven families are
+    other platforms' UI fonts, so each is a fontconfig miss. Resolving once
+    against the font database costs ~0.5 ms and picks the same family Qt would
+    have (first present, in order), but pays for it once instead of per widget:
+    measured 136 ms -> 76 ms from window construction to first paint.
+
+    PyQt5 is imported inside the function so the TUI, which imports this module
+    for its palette, never pulls Qt in.
+    """
+    from PyQt5.QtGui import QFont, QFontDatabase
+
+    stack = [f.strip().strip('"') for f in FONT_STACK.split(",")]
+    available = set(QFontDatabase().families())
+    font = QFont(app.font())
+    # Nothing from the stack installed: keep the last entry, the generic alias
+    # Qt resolves itself.
+    font.setFamily(next((f for f in stack if f in available), stack[-1]))
+    app.setFont(font)
+
 TYPE = {
     "display": (28, 600),
     "title":   (20, 600),

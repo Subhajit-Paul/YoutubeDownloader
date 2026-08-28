@@ -1,5 +1,6 @@
 """dep_check.py — startup dependency detection and per-platform install hints."""
 import pathlib
+import sys
 
 import pytest
 
@@ -22,6 +23,18 @@ def _fake_find_spec(present):
     return lambda name: object() if name in present else None
 
 
+def _absent(monkeypatch, *names):
+    """Make `names` unimportable through both doors check_deps looks at.
+
+    check_deps consults sys.modules before find_spec, because find_spec would
+    otherwise force the lazily-loaded yt-dlp to fully import. A stub on
+    find_spec alone leaves an already-imported module visible, so a test that
+    only patched that door would silently assert nothing.
+    """
+    for name in names:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+
+
 def test_no_missing_deps_when_everything_present(monkeypatch):
     monkeypatch.setattr(dep_check.importlib.util, "find_spec",
                         _fake_find_spec({"yt_dlp", "qt_material"}))
@@ -30,6 +43,7 @@ def test_no_missing_deps_when_everything_present(monkeypatch):
 
 
 def test_missing_ytdlp_is_required(monkeypatch):
+    _absent(monkeypatch, "yt_dlp")
     monkeypatch.setattr(dep_check.importlib.util, "find_spec",
                         _fake_find_spec({"qt_material"}))
     monkeypatch.setattr(dep_check, "check_ffmpeg_available", lambda: True)
@@ -66,6 +80,7 @@ def test_tui_context_skips_qt_material(monkeypatch):
 
 
 def test_all_missing_reports_every_dep(monkeypatch):
+    _absent(monkeypatch, "yt_dlp")
     monkeypatch.setattr(dep_check.importlib.util, "find_spec", _fake_find_spec(set()))
     monkeypatch.setattr(dep_check, "check_ffmpeg_available", lambda: False)
     missing = dep_check.check_deps()

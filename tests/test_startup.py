@@ -76,3 +76,119 @@ def test_import_stays_under_budget(app):
     # Take the last line: a warning on stdout would otherwise break the parse.
     elapsed = float(out.stdout.strip().splitlines()[-1]) * 1000
     assert elapsed < 900, f"{app} import took {elapsed:.0f} ms"
+
+
+# ── Regressions found by profiling first paint, not import ────────────────────
+
+def test_check_deps_does_not_materialise_the_lazy_yt_dlp():
+    """The trap that silently undid lazy loading.
+
+    importlib.util.find_spec() short-circuits on sys.modules and reads
+    __spec__, which on a LazyLoader module runs the deferred import. check_deps
+    runs before the first window paint in all three apps, so the 55 ms and 68
+    submodules lazy_import saved were being paid a few lines later anyway.
+    """
+    code = (
+        "import sys, ytd; import dep_check; dep_check.check_deps(); "
+        "print(type(sys.modules['yt_dlp']).__name__)"
+    )
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, cwd=str(ROOT), env=env)
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.strip().splitlines()[-1] == "_LazyModule", (
+        "check_deps forced the full yt-dlp import")
+
+
+def test_missing_yt_dlp_is_still_reported():
+    """The fast path must not become a blind path."""
+    code = (
+        "import sys, importlib.util\n"
+        "_real = importlib.util.find_spec\n"
+        "importlib.util.find_spec = lambda n, *a, **k: "
+        "None if n == 'yt_dlp' else _real(n, *a, **k)\n"
+        "import dep_check\n"
+        "print([d['name'] for d in dep_check.check_deps()])\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, cwd=str(ROOT), env=env)
+    assert out.returncode == 0, out.stderr[-800:]
+    assert "yt-dlp" in out.stdout.strip().splitlines()[-1]
+
+
+@pytest.mark.parametrize("app", ["ytd", "ytd_audio"])
+def test_urllib_is_not_imported_before_the_window(app):
+    """~17 ms of http.client/email.parser/ssl, first needed by the thumbnail
+    fetcher — which cannot run until metadata has arrived."""
+    got = _import_probe(app, "'urllib.request' in sys.modules")
+    assert got == "False", f"{app} imports urllib.request at startup"
+
+
+@pytest.mark.parametrize("app", ["ytd", "ytd_audio", "ytd_tui"])
+def test_update_check_is_not_imported_before_the_window(app):
+    """The update check fires three seconds after first paint."""
+    got = _import_probe(app, "'updater' in sys.modules")
+    assert got == "False", f"{app} imports updater at startup"
+
+
+@pytest.mark.parametrize("app", ["ytd", "ytd_audio"])
+def test_stylesheet_has_no_universal_font_rule(app):
+    """A `* { font-family: <7-family stack> }` rule makes Qt re-run family
+    matching per widget, and six of the seven families are other platforms' UI
+    fonts — a fontconfig miss each. theme.apply_font resolves it once.
+    """
+    src = (ROOT / f"{app}.py").read_text()
+    assert "* {{ font-family:" not in src and "* { font-family:" not in src, (
+        f"{app} reintroduced the universal font rule")
+    assert "apply_font" in src, f"{app} no longer applies the resolved font"
+
+
+def test_apply_font_picks_the_same_family_the_stack_would():
+    """Resolving the stack by hand must not change what the user sees."""
+    code = (
+        "from PyQt5.QtWidgets import QApplication\n"
+        "from PyQt5.QtGui import QFont, QFontInfo\n"
+        "import theme\n"
+        "app = QApplication([])\n"
+        "stack = [f.strip().strip('\\\"') for f in theme.FONT_STACK.split(',')]\n"
+        "qt = QFont(); qt.setFamilies(stack)\n"
+        "theme.apply_font(app)\n"
+        "print(QFontInfo(qt).family() == QFontInfo(app.font()).family())\n"
+    )
+    env = {**os.environ, "PYTHONPATH": str(ROOT), "QT_QPA_PLATFORM": "offscreen"}
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True,
+                         text=True, cwd=str(ROOT), env=env)
+    assert out.returncode == 0, out.stderr[-800:]
+    assert out.stdout.strip().splitlines()[-1] == "True", (
+        "apply_font resolves to a different family than the CSS stack did")
+
+
+@pytest.mark.parametrize("app", APPS)
+def test_downloader_progress_bar_is_off(app):
+    """quiet=True does not gate yt-dlp's progress bar; noprogress does. It was
+    formatting a terminal bar per chunk that no front-end here displays."""
+    src = (ROOT / f"{app}.py").read_text()
+    assert "noprogress" in src, f"{app} lets yt-dlp draw a progress bar"
+
+
+@pytest.mark.parametrize("app", ["ytd", "ytd_audio"])
+def test_no_font_is_built_without_a_family(app):
+    """QFont('') carries no family and resolves to a serif face.
+
+    While the stylesheet had a universal font rule this was masked — the rule
+    overrode the widget font. Removing that rule made two labels render serif,
+    with ligatures, until they were derived from the inherited font instead.
+    """
+    import ast
+
+    tree = ast.parse((ROOT / f"{app}.py").read_text())
+    bad = [
+        node.lineno for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and getattr(node.func, "id", None) == "QFont"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and node.args[0].value == ""
+    ]
+    assert not bad, f"{app} builds a QFont with an empty family at line(s) {bad}"

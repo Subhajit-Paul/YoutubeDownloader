@@ -243,3 +243,31 @@ def test_tui_installer_handles_a_directory():
     sh = _read("install-tui.sh")
     assert "LIB_DIR" in sh
     assert "ln -sf" in sh, "the launcher on PATH should be a symlink into the tree"
+
+
+# ── what the bundle must actually contain ────────────────────────────────────
+
+@pytest.mark.parametrize("spec,entry,exe", APPS)
+def test_lazily_imported_modules_are_named_as_hidden_imports(spec, entry, exe):
+    """A module reached only through a runtime string is invisible to PyInstaller.
+
+    common.lazy_import("yt_dlp") replaced a plain `import yt_dlp`, which cut
+    startup — and silently dropped yt-dlp from all three bundles, because
+    Analysis follows static imports and cannot see a name built at runtime. The
+    shipped v1.4.0 binaries reported "yt-dlp missing — downloads disabled" and
+    could not download anything; source checkouts and CI were unaffected,
+    because there yt-dlp is installed in the environment.
+
+    Every argument to lazy_import must therefore be named in hiddenimports.
+    """
+    src = _read(entry)
+    lazy = set(re.findall(r'lazy_import\(\s*["\']([\w.]+)["\']', src))
+    assert lazy, f"{entry} no longer uses lazy_import — drop this test with it"
+    spec_src = _read(spec)
+    hidden = re.search(r"hiddenimports=\(?(.*?)\)?,\s*\n\s*hookspath",
+                       spec_src, re.S)
+    assert hidden, f"could not locate hiddenimports in {spec}"
+    for module in lazy:
+        assert f'"{module}"' in hidden.group(1) or f"'{module}'" in hidden.group(1), (
+            f"{spec} does not bundle {module}, which {entry} loads via lazy_import; "
+            f"the built app will report it missing")

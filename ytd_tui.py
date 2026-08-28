@@ -24,7 +24,6 @@ from textual.widgets import (
 from common import get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
 import theme as T
-import updater
 
 # ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -622,6 +621,9 @@ class YTDApp(App):
             "ignoreerrors": True,
             "quiet": True,
             "no_warnings": True,
+            # Textual captures stdout, so the downloader was rendering a
+            # progress bar per chunk straight into a discarded buffer.
+            "noprogress": True,
         }
         loc = get_ffmpeg_location()
         if loc:
@@ -752,6 +754,9 @@ class YTDApp(App):
 
     @work(thread=True, name="update-check")
     def _check_for_update(self) -> None:
+        # Deferred: updater pulls urllib.request (~10 ms of the import) and this
+        # runs three seconds after the first paint.
+        import updater
         try:
             tag, _, _, html = updater.check_update("youtube-tui")
             if tag:

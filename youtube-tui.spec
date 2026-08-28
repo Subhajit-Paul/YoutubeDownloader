@@ -25,7 +25,8 @@ a = Analysis(
     hiddenimports=(
         _textual_hidden + _rich_hidden +
         collect_submodules("textual") +
-        ["common", "version", "updater", "dep_check", "theme"]
+        # yt_dlp: loaded via common.lazy_import(), invisible to static analysis.
+        ["yt_dlp", "common", "version", "updater", "dep_check", "theme"]
     ),
     hookspath=[],
     hooksconfig={},

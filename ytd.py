@@ -3,7 +3,6 @@ import os
 import shutil
 import threading
 import time
-import urllib.request
 from common import lazy_import
 
 # Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
@@ -25,7 +24,6 @@ from PyQt5.QtGui import (
 
 from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
-from update_ui import start_update_check
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -106,10 +104,11 @@ class _ThumbWidget(QWidget):
                     p.fillRect(
                         QRectF(filled - 16, 0, 18, self.H), grad)
         else:
-            import theme as _T
             p.fillRect(rect, QColor(_T.SURFACE))
             p.setPen(QColor(_T.FAINT))
-            p.setFont(QFont('', 26))
+            glyph_font = QFont(self.font())
+            glyph_font.setPointSize(26)
+            p.setFont(glyph_font)
             p.drawText(rect, Qt.AlignCenter, self._placeholder_text)
 
         p.end()
@@ -172,6 +171,9 @@ class ThumbnailFetcher(QObject):
         self.url = url
 
     def run(self):
+        # Deferred: urllib.request costs ~17 ms (it drags in http.client,
+        # email.parser and ssl) and is not reached until metadata has arrived.
+        import urllib.request
         try:
             req = urllib.request.Request(
                 self.url, headers={'User-Agent': 'Mozilla/5.0'})
@@ -303,6 +305,11 @@ class DownloadWorker(QObject):
             'fragment_retries': 10,
             'ignoreerrors': True,
             'quiet': True,
+            # quiet alone does not stop the downloader drawing a progress
+            # bar: noprogress is its gate. No console reads it here (the
+            # GUI has none, and a windowed Windows build has no stdout at
+            # all), so it was terminal formatting done per chunk for nobody.
+            'noprogress': True,
         }
         loc = get_ffmpeg_location()
         if loc:
@@ -356,6 +363,7 @@ _ADV_BUFSIZE_DEFAULT = 2   # index → 1 MB
 _ADV_CHUNK_DEFAULT   = 2   # index → 10 MB
 _ADV_TIMEOUT_DEFAULT = 1   # index → 30 s
 
+import theme as _T
 from theme import (
     ACCENT as _ACCENT, ACCENT_HOVER as _ACCENT_HOVER, ACCENT_DIM as _ACCENT_DIM, ACCENT_PRESSED as _ACCENT_PRESSED,
     BG as _BG, SURFACE as _SURFACE, CARD as _CARD, BORDER as _BORDER,
@@ -363,14 +371,13 @@ from theme import (
     FAINT as _FAINT, ON_ACCENT as _ON_ACCENT,
     SUCCESS as _SUCCESS, ERROR as _ERROR, WARNING as _WARN,
     RADIUS_CONTROL as _R_CTL, RADIUS_CARD as _R_CARD,
-    CONTROL_HEIGHT as _H_CTL, FONT_STACK as _FONT, IDENTITY as _IDENTITY,
+    CONTROL_HEIGHT as _H_CTL, IDENTITY as _IDENTITY,
 )
 
 
 class YoutubeDownloaderApp(QMainWindow):
 
     _SS = f"""
-        * {{ font-family: {_FONT}; }}
         QMainWindow, QWidget#root {{ background: {_BG}; }}
 
         QLabel {{ color: {_TEXT}; }}
@@ -541,6 +548,9 @@ class YoutubeDownloaderApp(QMainWindow):
         self.setMinimumSize(720, 560)
         self.resize(880, 640)
         self.setWindowIcon(QIcon(resource_path('logo.png')))
+        _app = QApplication.instance()
+        if _app is not None:
+            _T.apply_font(_app)
         self.setStyleSheet(self._SS)
 
         self._meta = {}        # last fetched metadata dict
@@ -641,7 +651,12 @@ class YoutubeDownloaderApp(QMainWindow):
         meta_col.setContentsMargins(0, 4, 0, 4)
 
         self.title_label = QLabel('')
-        self.title_label.setFont(QFont('', 14, QFont.Bold))
+        # QFont('') carries no family and resolves to a serif face; take the
+        # inherited application font and change only what differs.
+        title_font = QFont(self.title_label.font())
+        title_font.setPointSize(14)
+        title_font.setBold(True)
+        self.title_label.setFont(title_font)
         self.title_label.setWordWrap(False)
         self.title_label.setStyleSheet(f'color: {_TEXT};')
         meta_col.addWidget(self.title_label)
@@ -1109,5 +1124,11 @@ if __name__ == '__main__':
 
     window = YoutubeDownloaderApp()
     window.show()
-    QTimer.singleShot(3000, lambda: start_update_check(window, 'youtube-downloader'))
+    # Imported inside the callback: update_ui pulls updater and
+    # urllib.request (~21 ms), and nothing here runs until T+3 s.
+    def _check_updates():
+        from update_ui import start_update_check
+        start_update_check(window, 'youtube-downloader')
+
+    QTimer.singleShot(3000, _check_updates)
     sys.exit(app.exec_())
