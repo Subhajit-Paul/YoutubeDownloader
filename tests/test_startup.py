@@ -142,7 +142,7 @@ def test_update_check_is_not_imported_before_the_window(app):
     assert got == "False", f"{app} imports updater at startup"
 
 
-@pytest.mark.parametrize("app", ["ytd", "ytd_audio"])
+@pytest.mark.parametrize("app", ["ytd", "ytd_audio", "ytd_core"])
 def test_stylesheet_has_no_universal_font_rule(app):
     """A `* { font-family: <7-family stack> }` rule makes Qt re-run family
     matching per widget, and six of the seven families are other platforms' UI
@@ -151,7 +151,12 @@ def test_stylesheet_has_no_universal_font_rule(app):
     src = _read(f"{app}.py")
     assert "* {{ font-family:" not in src and "* { font-family:" not in src, (
         f"{app} reintroduced the universal font rule")
-    assert "apply_font" in src, f"{app} no longer applies the resolved font"
+
+
+def test_the_resolved_font_is_applied():
+    """Both desktop apps get it from the shared window base."""
+    assert "apply_font" in _read("ytd_core.py"), (
+        "ytd_core no longer applies the resolved font")
 
 
 def test_apply_font_picks_the_same_family_the_stack_would():

@@ -21,14 +21,19 @@ from common import lazy_import
 # download or metadata fetch begins.
 yt_dlp = lazy_import("yt_dlp")
 
-from PyQt5.QtWidgets import QWidget
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QRectF, QPointF
+from PyQt5.QtWidgets import (
+    QApplication, QFileDialog, QLabel, QMainWindow, QWidget,
+)
+from PyQt5.QtCore import (
+    Qt, pyqtSignal, QObject, QRectF, QPointF, QThread, QTimer,
+)
 from PyQt5.QtGui import (
-    QFont, QPainter, QPainterPath, QPixmap, QColor, QLinearGradient,
+    QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor, QLinearGradient,
 )
 
 import theme as _T
 from theme import (
+    WARNING as _WARN, IDENTITY as _IDENTITY,
     ACCENT as _ACCENT, ACCENT_HOVER as _ACCENT_HOVER, ACCENT_DIM as _ACCENT_DIM,
     ACCENT_PRESSED as _ACCENT_PRESSED,
     BG as _BG, SURFACE as _SURFACE, CARD as _CARD, BORDER as _BORDER,
@@ -37,7 +42,7 @@ from theme import (
     SUCCESS as _SUCCESS, ERROR as _ERROR,
     RADIUS_CONTROL as _R_CTL,
 )
-from common import get_ffmpeg_location
+from common import get_ffmpeg_location, resource_path
 
 
 # ── Options both apps offer ───────────────────────────────────────────────────
@@ -608,3 +613,253 @@ BASE_SS = f"""
         QComboBox:focus {{ border-color: {_ACCENT}; }}
         QCheckBox:focus {{ color: {_TEXT}; }}
 """
+
+
+# ── Window ────────────────────────────────────────────────────────────────────
+
+class BaseWindow(QMainWindow):
+    """The parts of the two windows that are the same window.
+
+    Everything below is state and event handling — what happens when a URL is
+    typed, metadata arrives, a download progresses, finishes or fails. None of
+    it carries any design intent, and it was byte-identical in both apps.
+
+    What the products genuinely differ in is declared as class attributes and
+    in _build_ui(), which each app supplies for itself.
+    """
+
+    WINDOW_TITLE = 'YouTube Downloader'
+    WINDOW_SIZE = (880, 640)
+    IDENTITY_KEY = 'video'
+    ITEM_NOUN = 'videos'            # how a playlist counts its contents
+    FINALISING_LABEL = 'Finalising…'
+    PCT_ACTIVE_STYLE = None         # audio tints the percentage while running
+
+    def _build_ui(self):
+        raise NotImplementedError
+
+    def __init__(self):
+            super().__init__()
+            self.setWindowTitle(self.WINDOW_TITLE)
+            self.setMinimumSize(720, 560)
+            self.resize(*self.WINDOW_SIZE)
+            self.setWindowIcon(QIcon(resource_path('logo.png')))
+            _app = QApplication.instance()
+            if _app is not None:
+                _T.apply_font(_app)
+            self.setStyleSheet(self._SS)
+
+            self._meta = {}        # last fetched metadata dict
+            self._fetch_timer = QTimer()
+            self._fetch_timer.setSingleShot(True)
+            self._fetch_timer.setInterval(1000)
+            self._fetch_timer.timeout.connect(self._fetch_metadata)
+
+            self._build_ui()
+
+    def _lbl(self, text):
+            l = QLabel(text.upper())
+            l.setObjectName('section')
+            return l
+
+    def _toggle_advanced(self):
+            if self.adv_panel.isVisible():
+                self.adv_panel.hide()
+                self.adv_btn.setText('▸  Advanced')
+            else:
+                self.adv_panel.show()
+                self.adv_btn.setText('▾  Advanced')
+
+    def _adv_opts(self):
+            return dict(
+                concurrent_fragments=_ADV_FRAGMENTS[self.adv_frag.currentIndex()][1],
+                buffersize=_ADV_BUFSIZE[self.adv_buf.currentIndex()][1],
+                http_chunk_size=_ADV_CHUNK[self.adv_chunk.currentIndex()][1],
+                socket_timeout=_ADV_TIMEOUT[self.adv_timeout.currentIndex()][1],
+                use_aria2c=self.adv_aria2c.isChecked(),
+            )
+
+    def _set_idle(self):
+            self.empty.show()
+            self.card.hide()
+            self.controls.hide()
+            self.dl_btn.hide()
+            self.cancel_btn.hide()
+            self.progress_widget.hide()
+            self.overall_bar.hide()
+            self.overall_label.hide()
+            self._set_status('')
+
+    def _set_fetching(self):
+            self.empty.hide()
+            self.card.hide()
+            self.controls.hide()
+            self.dl_btn.hide()
+            self.cancel_btn.hide()
+            self.progress_widget.hide()
+            self._set_status('Fetching video info…', _MUTED)
+
+    def _set_ready(self, meta: dict):
+            self.empty.hide()
+            self._meta = meta
+            t = meta['title']
+            self.title_label.setText(
+                t if len(t) <= 52 else t[:50] + '…')
+            self.channel_label.setText(meta.get('channel', ''))
+            parts = []
+            dur = fmt_dur(meta.get('duration', 0))
+            if dur:
+                parts.append(dur)
+            if meta.get('is_playlist'):
+                parts.append(f"{meta['count']} {self.ITEM_NOUN}")
+            self.meta_label.setText('  ·  '.join(parts))
+            self.thumb.reset()
+            self.thumb.setPlaceholderText('⏳')
+            self.card.show()
+            self.controls.show()
+            self.dl_btn.show()
+            self.cancel_btn.hide()
+            self.progress_widget.hide()
+            self._set_status('Ready to download', _SUCCESS)
+
+    def _set_downloading(self):
+            self.empty.hide()
+            self.controls.hide()
+            self.dl_btn.hide()
+            self.cancel_btn.show()
+            self.cancel_btn.setEnabled(True)
+            self.progress_widget.show()
+            self.thumb.setProgress(0)
+            self.pct_big.setText('0%')
+            if self.PCT_ACTIVE_STYLE:
+                self.pct_big.setStyleSheet(self.PCT_ACTIVE_STYLE)
+            self.progress_bar.setValue(0)
+            self.speed_label.setText('')
+
+    def _set_status(self, text: str, color: str = _MUTED):
+            self.status_label.setText(text)
+            self.status_label.setStyleSheet(f'color: {color}; font-size: 11px;')
+
+    def _on_url_changed(self, text: str):
+            text = text.strip()
+            if text.startswith(('http://', 'https://')):
+                self._fetch_timer.start()
+                self._set_fetching()
+            else:
+                self._fetch_timer.stop()
+                self._set_idle()
+
+    def _paste_and_fetch(self):
+            self.url_input.setText(QApplication.clipboard().text())
+
+    def _fetch_metadata(self):
+            url = self.url_input.text().strip()
+            if not url.startswith(('http://', 'https://')):
+                return
+            self._set_fetching()
+            self._meta_thread = QThread()
+            self._meta_worker = MetaWorker(url)
+            self._meta_worker.moveToThread(self._meta_thread)
+            self._meta_thread.started.connect(self._meta_worker.run)
+            self._meta_worker.ready.connect(self._on_meta_ready)
+            self._meta_worker.failed.connect(self._on_meta_failed)
+            self._meta_worker.ready.connect(self._meta_thread.quit)
+            self._meta_worker.failed.connect(self._meta_thread.quit)
+            self._meta_thread.finished.connect(self._meta_thread.deleteLater)
+            self._meta_thread.start()
+
+    def _on_meta_ready(self, meta: dict):
+            self._set_ready(meta)
+            thumb_url = meta.get('thumbnail_url', '')
+            if thumb_url:
+                self._thumb_thread = QThread()
+                self._thumb_worker = ThumbnailFetcher(thumb_url)
+                self._thumb_worker.moveToThread(self._thumb_thread)
+                self._thumb_thread.started.connect(self._thumb_worker.run)
+                self._thumb_worker.ready.connect(self._on_thumb_ready)
+                self._thumb_worker.ready.connect(self._thumb_thread.quit)
+                self._thumb_thread.finished.connect(self._thumb_thread.deleteLater)
+                self._thumb_thread.start()
+
+    def _on_meta_failed(self, msg: str):
+            self._set_status(f'⚠  {msg}', _ERROR)
+            self.card.hide()
+            self.controls.hide()
+            self.dl_btn.hide()
+
+    def _on_thumb_ready(self, data: bytes):
+            pix = QPixmap()
+            pix.loadFromData(data)
+            if not pix.isNull():
+                self.thumb.setPixmap(pix)
+
+    def _browse(self):
+            d = QFileDialog.getExistingDirectory(
+                self, 'Select folder', self.save_input.text())
+            if d:
+                self.save_input.setText(d)
+
+    def _cancel_download(self):
+            if hasattr(self, 'worker'):
+                self.worker.cancel()
+            self.cancel_btn.setEnabled(False)
+            self._set_status('Cancelling…', _WARN)
+
+    def _on_progress(self, d: dict):
+            pct = d['percent']
+            ipct = int(pct)
+            # Animate toward the new value instead of snapping to it.
+            self._bar_anim.stop()
+            self._bar_anim.setStartValue(self.progress_bar.value())
+            self._bar_anim.setEndValue(ipct)
+            self._bar_anim.start()
+            self.pct_big.setText(f'{ipct}%')
+            self.thumb.setProgress(pct)
+
+            speed = d['speed']
+            eta = d['eta']
+            idx = d.get('playlist_index')
+            count = d.get('playlist_count')
+
+            if idx and count:
+                self.speed_label.setText(
+                    f'{idx}/{count}  ·  {speed:.1f} MB/s  ·  ETA {eta}s')
+            else:
+                self.speed_label.setText(
+                    f'{speed:.1f} MB/s  ·  ETA {eta}s')
+
+    def _on_postprocess(self, msg: str):
+            if msg:
+                self._set_status(msg, _WARN)
+            else:
+                self._set_status(self.FINALISING_LABEL, _ACCENT)
+
+    def _on_overall(self, done: int, total: int):
+            self.overall_bar.setMaximum(total)
+            self.overall_bar.setValue(done)
+            self.overall_bar.show()
+            self.overall_label.setText(f'Completed {done} of {total}')
+            self.overall_label.show()
+
+    def _on_done(self):
+            self.thread.quit(); self.thread.wait()
+            self.thumb.setProgress(100)
+            self.progress_bar.setValue(100)
+            self.pct_big.setText('✓')
+            self.pct_big.setStyleSheet(f'color: {_SUCCESS}; font-size: 15px; font-weight: 600;')
+            self.speed_label.setText('')
+            self.cancel_btn.hide()
+            self.controls.show()
+            self.dl_btn.show()
+            self._set_status('Download complete', _SUCCESS)
+
+    def _on_error(self, msg: str):
+            self.thread.quit(); self.thread.wait()
+            self.cancel_btn.hide()
+            self.controls.show()
+            self.dl_btn.show()
+            self.progress_widget.hide()
+            if 'cancelled' in msg.lower():
+                self._set_status('Download cancelled', _WARN)
+            else:
+                self._set_status(f'✗  {msg}', _ERROR)

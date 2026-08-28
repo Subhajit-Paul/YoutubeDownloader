@@ -241,6 +241,16 @@ def test_the_two_desktop_apps_no_longer_duplicate_the_engine():
             f"{app}'s worker overrides shared behaviour: "
             f"{sorted(methods - {'__init__', 'media_opts'})}")
 
+        # The window may lay itself out; the state machine is shared.
+        window = next(n for n in tree.body if isinstance(n, _ast.ClassDef)
+                      and n.name.endswith("DownloaderApp"))
+        assert {b.id for b in window.bases if isinstance(b, _ast.Name)} == {"BaseWindow"}
+        win_methods = {n.name for n in window.body if isinstance(n, _ast.FunctionDef)}
+        allowed = {"_build_ui", "_start_download", "_selected_bitrate"}
+        assert win_methods <= allowed, (
+            f"{app}'s window re-implements shared behaviour: "
+            f"{sorted(win_methods - allowed)}")
+
 
 @pytest.mark.parametrize("mod_name", ["ytd", "ytd_audio"])
 def test_both_apps_resolve_the_same_engine(mod_name):
