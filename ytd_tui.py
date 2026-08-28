@@ -3,6 +3,7 @@
 import os
 import sys
 import shutil
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -52,6 +53,44 @@ _ADV_CHUNK_OPTS   = [("1 MB", "1048576"), ("5 MB", "5242880"),
                      ("10 MB", "10485760"), ("25 MB", "26214400")]
 _ADV_TIMEOUT_OPTS = [("10 s", "10"), ("30 s", "30"), ("60 s", "60")]
 _ARIA2C_FOUND     = shutil.which("aria2c") is not None
+
+# Metadata fetched for the preview card is reusable: pressing Download
+# otherwise pays for a second full extraction, measured at 2.0 s on YouTube
+# before a single byte moves. Format URLs carry a 6 h expiry, so this window
+# leaves a wide margin; past it we simply extract again.
+_INFO_MAX_AGE = 300  # seconds
+
+
+def _download(ydl_opts, url, info, cancel=None):
+    """Run the download, starting from cached info when we have it.
+
+    download_with_info_file() is yt-dlp's own entry point for this, but its
+    built-in recovery only fires on a raised DownloadError — and this app sets
+    ignoreerrors, so a failure comes back as a non-zero retcode instead.
+    Expired formats look exactly like that, so the retry is ours to make. It
+    costs a wasted attempt only on a path that was already failing.
+    """
+    if not info:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.download([url])
+
+    fd, path = tempfile.mkstemp(suffix=".info.json")
+    os.close(fd)
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            yt_dlp.utils.write_json_file(ydl.sanitize_info(info), path)
+            retcode = ydl.download_with_info_file(path)
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+
+    if retcode and not (cancel and cancel.is_set()):
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            return ydl.download([url])
+    return retcode
+
 
 _QUALITY_MAP = {
     "Best":  "bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]",
@@ -242,6 +281,9 @@ class YTDApp(App):
         self._completed = 0
         self._total = 0
         self._lock = threading.Lock()
+        self._info = None
+        self._info_url = None
+        self._info_at = 0.0
 
     # ── Compose ─────────────────────────────────────────────────────────────
 
@@ -364,6 +406,8 @@ class YTDApp(App):
         if self._meta_timer is not None:
             self._meta_timer.stop()
         url = event.value.strip()
+        if url != self._info_url:
+            self._info = None
         if not url.startswith(("http://", "https://")):
             self.query_one("#meta-card").remove_class("visible")
             return
@@ -385,10 +429,16 @@ class YTDApp(App):
         if not info:
             return
         if info.get("_type") == "playlist":
+            # Playlist entries are flat stubs here and would be re-extracted
+            # individually anyway, so there is nothing worth carrying forward.
+            self._info = None
             entries = [e for e in (info.get("entries") or []) if e]
             count = info.get("playlist_count") or len(entries)
             sub = f"Playlist · {count} items"
         else:
+            # Reused when Download is pressed, so the extraction just paid for
+            # is not thrown away and repeated — 2.0 s on YouTube.
+            self._info, self._info_url, self._info_at = info, url, time.monotonic()
             secs = info.get("duration") or 0
             mins, sec = divmod(int(secs), 60)
             hrs, mins = divmod(mins, 60)
@@ -483,9 +533,14 @@ class YTDApp(App):
             self._reset_ui()
             return
 
+        info = None
+        if (self._info_url == url
+                and time.monotonic() - self._info_at < _INFO_MAX_AGE):
+            info = self._info
+
         self._run_download(
             url, save_path, is_audio, quality, fmt, bitrate, browser,
-            adv_frag, adv_buf, adv_chunk, adv_timeout, adv_aria2c,
+            adv_frag, adv_buf, adv_chunk, adv_timeout, adv_aria2c, info,
         )
 
     def action_cancel_dl(self) -> None:
@@ -541,6 +596,7 @@ class YTDApp(App):
         http_chunk_size: int = 10 * 1024 * 1024,
         socket_timeout: int = 30,
         use_aria2c: bool = False,
+        info: dict | None = None,
     ) -> None:
         cancel = self._cancel_event
 
@@ -660,8 +716,7 @@ class YTDApp(App):
             return
 
         try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                retcode = ydl.download([url])
+            retcode = _download(ydl_opts, url, info, cancel)
             if cancel.is_set():
                 self.call_from_thread(self._ui_cancelled)
             elif retcode:

@@ -1,6 +1,7 @@
 import sys
 import os
 import shutil
+import tempfile
 import threading
 import time
 from common import lazy_import
@@ -152,6 +153,9 @@ class MetaWorker(QObject):
                 thumb = (info.get('thumbnail') or
                          next((t['url'] for t in reversed(thumbs) if t.get('url')), ''))
                 self.ready.emit({
+                    '_info': info,
+                    '_url': self.url,
+                    '_fetched_at': time.monotonic(),
                     'title': info.get('title', ''),
                     'channel': info.get('channel') or info.get('uploader', ''),
                     'duration': info.get('duration', 0),
@@ -194,7 +198,7 @@ class DownloadWorker(QObject):
     def __init__(self, url, save_path, quality, browser='None',
                  concurrent_fragments=8, buffersize=1024*1024,
                  http_chunk_size=10*1024*1024, socket_timeout=30,
-                 use_aria2c=False):
+                 use_aria2c=False, info=None):
         super().__init__()
         self.url = url
         self.save_path = save_path
@@ -205,6 +209,7 @@ class DownloadWorker(QObject):
         self.http_chunk_size = http_chunk_size
         self.socket_timeout = socket_timeout
         self.use_aria2c = use_aria2c
+        self.info = info
         self._cancel = threading.Event()
         self._completed = 0
         self._total = 0
@@ -277,6 +282,45 @@ class DownloadWorker(QObject):
             if total:
                 self.overall.emit(done, total)
 
+
+    # Metadata fetched for the preview is reusable: clicking Download otherwise
+    # pays for a second full extraction, measured at 2.0 s on YouTube before a
+    # single byte moves. Format URLs carry a 6 h expiry, so this window has a
+    # wide margin; past it, or for a playlist (whose entries are flat stubs and
+    # would be re-extracted individually anyway), we simply extract afresh.
+    INFO_MAX_AGE = 300  # seconds
+
+    def _download(self, ydl_opts):
+        """Run the download, starting from cached info when we have it.
+
+        download_with_info_file() is yt-dlp's own entry point for this, but its
+        built-in recovery only fires on a raised DownloadError — and this app
+        sets ignoreerrors, so a failure comes back as a non-zero retcode
+        instead. Expired formats look exactly like that, so the retry is ours
+        to make: extract afresh rather than report a failure we can recover
+        from. It costs a wasted attempt only on a path that was already failing.
+        """
+        if not self.info:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.download([self.url])
+
+        fd, path = tempfile.mkstemp(suffix='.info.json')
+        os.close(fd)
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                yt_dlp.utils.write_json_file(ydl.sanitize_info(self.info), path)
+                retcode = ydl.download_with_info_file(path)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+        if retcode and not self._cancel.is_set():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                return ydl.download([self.url])
+        return retcode
+
     def run(self):
         quality_map = {
             'Best':  'bv*[ext=mp4]+ba[ext=m4a]/b[ext=mp4]',
@@ -323,8 +367,7 @@ class DownloadWorker(QObject):
             }
         try:
             self.status.emit('Starting…')
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                retcode = ydl.download([self.url])
+            retcode = self._download(ydl_opts)
             if self._cancel.is_set():
                 self.error.emit('cancelled')
             elif retcode:
@@ -339,6 +382,25 @@ class DownloadWorker(QObject):
             self.error.emit('cancelled')
         except Exception as exc:
             self.error.emit(str(exc).split('\n')[0][:200])
+
+
+
+def _reusable_info(meta, url):
+    """The info from the preview fetch, if it is safe to download from.
+
+    Reusing it skips a second full extraction — 2.0 s on YouTube, paid after
+    the user clicks Download and before any byte moves. It is only safe when
+    it describes this exact URL, is a single video (playlist entries are flat
+    stubs that get re-extracted individually anyway), and is recent enough that
+    its format URLs cannot have expired; YouTube's carry a 6 h expiry, so the
+    window below leaves a wide margin. Anything else returns None, which is
+    exactly the behaviour this app had before.
+    """
+    if not meta or meta.get('_url') != url or meta.get('is_playlist'):
+        return None
+    if time.monotonic() - meta.get('_fetched_at', 0) >= DownloadWorker.INFO_MAX_AGE:
+        return None
+    return meta.get('_info')
 
 
 # ── Main window ────────────────────────────────────────────────────────────────
@@ -1027,13 +1089,14 @@ class YoutubeDownloaderApp(QMainWindow):
         url = self.url_input.text().strip()
         if not url or not self._meta:
             return
+        info = _reusable_info(self._meta, url)
         self._set_downloading()
         self.thread = QThread()
         self.worker = DownloadWorker(
             url, self.save_input.text(),
             self.quality_combo.currentText(),
             self.browser_combo.currentText(),
-            **self._adv_opts())
+            **self._adv_opts(), info=info)
         self.worker.moveToThread(self.thread)
         self.thread.started.connect(self.worker.run)
         self.worker.finished.connect(self._on_done)

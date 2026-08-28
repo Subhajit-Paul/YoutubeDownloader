@@ -3,6 +3,8 @@
 run() is exercised with yt_dlp.YoutubeDL swapped for a recorder, so the options
 dict the app actually hands to yt-dlp is asserted without any network access.
 """
+import time
+
 import pytest
 
 import ytd
@@ -220,3 +222,64 @@ def test_tui_uses_the_same_template_as_the_gui():
     import re
     src = (ROOT_TUI := __import__("pathlib").Path(ytd_tui.__file__)).read_text(encoding="utf-8")
     assert '"%(playlist_title&{}|)s/%(title)s.%(ext)s"' in src
+
+
+# ── when previously-fetched metadata may be reused ───────────────────────────
+# Reusing the preview's extraction skips a second full one — measured at 2.0 s
+# on YouTube, paid after the user clicks Download and before any byte moves.
+
+GUI_MODS = [ytd, ytd_audio]
+GUI_IDS = ["video", "audio"]
+URL = "https://youtube.com/watch?v=1"
+
+
+def _meta(mod, **over):
+    meta = {"_info": {"id": "1"}, "_url": URL, "_fetched_at": time.monotonic(),
+            "title": "t", "is_playlist": False, "count": 1}
+    meta.update(over)
+    return meta
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+def test_fresh_single_video_info_is_reused(mod):
+    assert mod._reusable_info(_meta(mod), URL) == {"id": "1"}
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+def test_playlist_info_is_not_reused(mod):
+    """Entries are flat stubs; each would be re-extracted individually anyway."""
+    assert mod._reusable_info(_meta(mod, is_playlist=True, count=9), URL) is None
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+def test_stale_info_is_not_reused(mod):
+    """Format URLs expire; past the window, extract again rather than guess."""
+    old = time.monotonic() - mod.DownloadWorker.INFO_MAX_AGE - 1
+    assert mod._reusable_info(_meta(mod, _fetched_at=old), URL) is None
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+def test_info_just_inside_the_window_is_still_reused(mod):
+    fresh = time.monotonic() - mod.DownloadWorker.INFO_MAX_AGE + 5
+    assert mod._reusable_info(_meta(mod, _fetched_at=fresh), URL) == {"id": "1"}
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+def test_info_for_a_different_url_is_not_reused(mod):
+    """The worst bug available here would be downloading the wrong video."""
+    assert mod._reusable_info(_meta(mod, _url="https://youtube.com/watch?v=OTHER"),
+                              URL) is None
+
+
+@pytest.mark.parametrize("mod", GUI_MODS, ids=GUI_IDS)
+@pytest.mark.parametrize("meta", [{}, None, {"_url": URL}], ids=["empty", "none", "partial"])
+def test_absent_or_partial_metadata_never_reuses(mod, meta):
+    """Before any fetch completes, and after a failed one."""
+    assert mod._reusable_info(meta, URL) is None
+
+
+@pytest.mark.parametrize("mod", GUI_MODS + [ytd_tui], ids=GUI_IDS + ["tui"])
+def test_reuse_window_leaves_margin_under_the_url_expiry(mod):
+    """YouTube format URLs measured at 6 h validity; stay well inside it."""
+    limit = getattr(mod, "_INFO_MAX_AGE", None) or mod.DownloadWorker.INFO_MAX_AGE
+    assert 0 < limit <= 1800

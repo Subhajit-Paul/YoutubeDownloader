@@ -45,11 +45,23 @@ def test_all_apps_share_one_output_template():
 
 @pytest.mark.parametrize("path", APPS_WITH_OUTTMPL)
 def test_download_return_code_is_checked(path):
-    """ignoreerrors=True means yt-dlp returns non-zero instead of raising."""
+    """ignoreerrors=True means yt-dlp returns non-zero instead of raising.
+
+    Asserted as a property rather than a call shape: every yt-dlp download entry
+    point must have its result assigned or returned, wherever it is called from.
+    Matching one literal `retcode = ydl.download(...)` broke as soon as the two
+    entry points moved behind a helper, while the property it cared about held.
+    """
     src = (ROOT / path).read_text(encoding="utf-8")
     assert "ignoreerrors" in src
-    assert re.search(r"=\s*ydl\.download\(", src), (
-        f"{path} discards ydl.download()'s return code, so failures look like success")
+    entry_points = re.findall(r"^(.*?)\bydl\.(download|download_with_info_file)\(",
+                              src, re.M)
+    assert entry_points, f"{path} calls no yt-dlp download entry point"
+    for prefix, call in entry_points:
+        assert re.search(r"(=|\breturn\b)\s*$", prefix), (
+            f"{path} discards ydl.{call}()'s return code, so failures look "
+            f"like success")
+    assert "retcode" in src, f"{path} never inspects the return code"
 
 
 # ── static properties of the Kivy app ────────────────────────────────────────

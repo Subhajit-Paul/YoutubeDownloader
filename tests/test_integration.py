@@ -169,3 +169,86 @@ async def test_tui_really_downloads(media_server, tmp_path):
     assert not errors, errors
     assert [p.name for p in tmp_path.glob("*.mp4")] == ["clip.mp4"]
     assert (tmp_path / ".ytdl-archive").exists(), "resumability archive missing"
+
+
+# ── reusing the metadata already fetched for the preview ─────────────────────
+# Pressing Download used to trigger a second full extraction: measured at 2.0 s
+# on YouTube before a single byte moved. These run against the local server, so
+# they assert the wiring and the fallback, not the saving.
+
+def _meta(url):
+    """Extract exactly as the preview path does."""
+    import yt_dlp
+    opts = {"quiet": True, "no_warnings": True,
+            "extract_flat": "in_playlist", "noprogress": True}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        return ydl.extract_info(url, download=False)
+
+
+def test_reused_info_downloads_the_same_file(media_server, tmp_path):
+    url = f"{media_server}/clip.mp4"
+    info = _meta(url)
+    w = ytd.DownloadWorker(url, str(tmp_path), "Best", info=info)
+    events = _run(w)
+    assert events["error"] == [], events["error"]
+    assert events["finished"] == [True]
+    assert [p.name for p in tmp_path.glob("*.mp4")] == ["clip.mp4"]
+
+
+def test_reused_info_is_byte_identical_to_extracting_again(media_server, tmp_path):
+    url = f"{media_server}/clip.mp4"
+    plain, reused = tmp_path / "plain", tmp_path / "reused"
+    plain.mkdir(); reused.mkdir()
+    assert _run(ytd.DownloadWorker(url, str(plain), "Best"))["error"] == []
+    assert _run(ytd.DownloadWorker(url, str(reused), "Best", info=_meta(url)))["error"] == []
+    a = (plain / "clip.mp4").read_bytes()
+    b = (reused / "clip.mp4").read_bytes()
+    assert a == b and len(a) > 0
+
+
+def test_stale_info_falls_back_to_a_fresh_extraction(media_server, tmp_path):
+    """The safety property the whole feature rests on.
+
+    Format URLs expire. If reusing info ever fails, yt-dlp must re-extract from
+    webpage_url rather than report a download that produced no file.
+    """
+    url = f"{media_server}/clip.mp4"
+    info = _meta(url)
+    dead = "http://127.0.0.1:1/gone.mp4"
+    info["url"] = dead
+    for f in info.get("formats") or []:
+        f["url"] = dead
+    assert info.get("webpage_url"), "fallback needs webpage_url in the info"
+
+    w = ytd.DownloadWorker(url, str(tmp_path), "Best", info=info)
+    events = _run(w)
+    assert events["error"] == [], events["error"]
+    assert [p.name for p in tmp_path.glob("*.mp4")] == ["clip.mp4"], (
+        "stale info must fall back, not silently produce nothing")
+
+
+def test_cancellation_still_works_with_reused_info(media_server, tmp_path):
+    url = f"{media_server}/clip.mp4"
+    w = ytd.DownloadWorker(url, str(tmp_path), "Best", info=_meta(url))
+    w.cancel()
+    events = _run(w)
+    assert events["error"] == ["cancelled"]
+    assert events["finished"] == []
+
+
+def test_audio_worker_also_reuses_info(media_server, tmp_path):
+    url = f"{media_server}/clip.mp4"
+    w = ytd_audio.DownloadWorker(url, str(tmp_path), "mp3", "128", info=_meta(url))
+    events = _run(w)
+    assert events["error"] == [], events["error"]
+    assert [p.suffix for p in tmp_path.iterdir() if p.suffix == ".mp3"] == [".mp3"]
+
+
+def test_no_info_leaves_a_temp_file_behind(media_server, tmp_path):
+    """The info json is written to the system temp dir; it must not accumulate."""
+    import glob, os, tempfile
+    url = f"{media_server}/clip.mp4"
+    before = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.info.json")))
+    _run(ytd.DownloadWorker(url, str(tmp_path), "Best", info=_meta(url)))
+    after = set(glob.glob(os.path.join(tempfile.gettempdir(), "*.info.json")))
+    assert after == before, f"leaked {after - before}"
