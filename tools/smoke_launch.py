@@ -38,6 +38,7 @@ def executable(bundle):
 
 
 def smoke(bundle, seconds=12):
+    bundle = os.path.abspath(bundle)
     exe = executable(bundle)
     if exe is None:
         print(f"FAIL  {bundle}: no executable inside", file=sys.stderr)
