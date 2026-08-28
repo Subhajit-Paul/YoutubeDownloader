@@ -42,7 +42,6 @@ Package: ${APP}
 Version: ${VERSION}
 Architecture: ${ARCH}
 Maintainer: Subhajit Paul <test.dev.paul@gmail.com>
-Depends: ffmpeg
 Description: ${DISPLAY}
  ${DESC}
 EOF

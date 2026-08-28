@@ -81,34 +81,63 @@ jobs:
           iconutil -c icns logo.iconset -o logo.icns
 
       # ── ffmpeg ─────────────────────────────────────────────────────────────
-      - name: Download static ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          wget -q "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" \
-            -O ffmpeg.tar.xz
-          tar -xf ffmpeg.tar.xz --strip-components=2 --wildcards "*/bin/ffmpeg"
-          chmod +x ffmpeg
-          rm ffmpeg.tar.xz
+      # A general-purpose build (BtbN's, and Homebrew's) is 140 MB and was 72%
+      # of the TUI bundle and 44% of the desktop one, almost none of it
+      # reachable from these apps: they mux video without re-encoding it and
+      # transcode audio to one of six formats. build-ffmpeg.sh builds only
+      # that. Keyed on the recipe, so a release that does not change it reuses
+      # the binary instead of rebuilding.
+      - name: Cache ffmpeg
+        id: ffmpeg-cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-out
+          key: ffmpeg-${{ runner.os }}-${{ hashFiles('packaging/ffmpeg/build-ffmpeg.sh') }}
 
-      - name: Download static ffmpeg (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
-          Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-          Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
-          Move-Item "ffmpeg_tmp\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe" ".\ffmpeg.exe"
-          Remove-Item -Recurse -Force ffmpeg_tmp, ffmpeg.zip
+      - name: Install ffmpeg build tools (Linux)
+        if: runner.os == 'Linux' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: sudo apt-get install -y --no-install-recommends nasm
 
-      - name: Install and copy ffmpeg (macOS)
-        if: runner.os == 'macOS'
+      - name: Install ffmpeg build tools (macOS)
+        if: runner.os == 'macOS' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: brew install nasm
+
+      - name: Install ffmpeg build tools (Windows)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: false
+          install: >-
+            base-devel curl diffutils make tar
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-nasm
+            mingw-w64-ucrt-x86_64-pkgconf
+
+      - name: Build minimal ffmpeg (Linux, macOS)
+        if: runner.os != 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        run: bash packaging/ffmpeg/build-ffmpeg.sh ffmpeg-out
+
+      - name: Build minimal ffmpeg (Windows)
+        if: runner.os == 'Windows' && steps.ffmpeg-cache.outputs.cache-hit != 'true'
+        shell: msys2 {0}
+        run: bash packaging/ffmpeg/build-ffmpeg.sh ffmpeg-out
+
+      # The specs pick ffmpeg up from the project root.
+      - name: Stage ffmpeg for the build
+        shell: bash
         run: |
-          brew install ffmpeg --quiet
-          cp "$(which ffmpeg)" ./ffmpeg
+          cp ffmpeg-out/ffmpeg* ./
+          chmod +x ./ffmpeg 2>/dev/null || true
+          ls -l ./ffmpeg* 
 
       # ── Python deps & PyInstaller build ────────────────────────────────────
       - name: Install Python dependencies
         run: pip install -r requirements-build.txt
+
+      - name: Check the built ffmpeg can do what the apps ask
+        shell: bash
+        run: python tools/check_ffmpeg.py ./ffmpeg
 
       - name: Create Windows icon (logo.ico)
         if: runner.os == 'Windows'

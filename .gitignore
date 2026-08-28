@@ -3,8 +3,10 @@ android/.buildozer/
 build/
 dist/
 *.egg-info/
-ffmpeg
-ffmpeg.exe
+# the binary staged at the repo root for a build — anchored, so it does not
+# also swallow packaging/ffmpeg/
+/ffmpeg
+/ffmpeg.exe
 *.pyc
 __pycache__/
 *.pyo
