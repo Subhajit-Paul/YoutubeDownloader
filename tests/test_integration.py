@@ -133,3 +133,39 @@ def test_save_path_with_spaces_and_unicode(media_server, tmp_path):
     events = _run(w)
     assert events["error"] == [], events["error"]
     assert list(target.glob("*.mp4"))
+
+
+# ── TUI download path ────────────────────────────────────────────────────────
+# test_tui.py stubs _run_download, and the tests above drive the Qt workers, so
+# the TUI's own download path had no coverage at all.
+
+async def test_tui_really_downloads(media_server, tmp_path):
+    import asyncio
+
+    import dep_check
+    import ytd_tui
+    from textual.widgets import Input
+
+    real_check = dep_check.check_deps
+    dep_check.check_deps = lambda **kw: []
+    errors = []
+    real_err = ytd_tui.YTDApp._ui_error
+    ytd_tui.YTDApp._ui_error = lambda self, msg: errors.append(msg)
+    try:
+        app = ytd_tui.YTDApp()
+        async with app.run_test(size=(110, 34)) as pilot:
+            app.query_one("#url-input", Input).value = f"{media_server}/clip.mp4"
+            app.query_one("#save-input", Input).value = str(tmp_path)
+            await pilot.press("ctrl+d")
+            for _ in range(60):
+                await pilot.pause()
+                await asyncio.sleep(0.25)
+                if any(p.suffix == ".mp4" for p in tmp_path.iterdir()):
+                    break
+    finally:
+        dep_check.check_deps = real_check
+        ytd_tui.YTDApp._ui_error = real_err
+
+    assert not errors, errors
+    assert [p.name for p in tmp_path.glob("*.mp4")] == ["clip.mp4"]
+    assert (tmp_path / ".ytdl-archive").exists(), "resumability archive missing"
