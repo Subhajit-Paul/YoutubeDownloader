@@ -46,8 +46,18 @@ def capabilities(ffmpeg, what):
 
 def main():
     ffmpeg = sys.argv[1] if len(sys.argv) > 1 else "ffmpeg"
-    if not shutil.which(ffmpeg) and not pathlib.Path(ffmpeg).exists():
-        sys.exit(f"no such ffmpeg: {ffmpeg}")
+    # On Windows the binary is ffmpeg.exe. shutil.which("./ffmpeg") finds it
+    # through PATHEXT and returns truthy, so a bare existence check passes and
+    # the literal "./ffmpeg" then fails to execute — which is exactly how the
+    # first v1.5.0 Windows job died, after building the binary correctly.
+    # Take the resolved path, not the argument.
+    if pathlib.Path(ffmpeg).exists():
+        ffmpeg = str(pathlib.Path(ffmpeg).resolve())
+    else:
+        found = shutil.which(ffmpeg)
+        if not found:
+            sys.exit(f"no such ffmpeg: {ffmpeg}")
+        ffmpeg = found
 
     ver = run(ffmpeg, "-version").stdout.splitlines()[0]
     size = pathlib.Path(ffmpeg).stat().st_size / 1048576
