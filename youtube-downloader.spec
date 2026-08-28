@@ -2,7 +2,6 @@
 import os
 import shutil
 import sys
-from PyInstaller.utils.hooks import collect_data_files
 
 # Bundle ffmpeg if present in project root (downloaded by CI) or via which on macOS
 ffmpeg_binaries = []
@@ -21,12 +20,26 @@ a = Analysis(
     ['ytd.py'],
     pathex=[],
     binaries=ffmpeg_binaries,
-    datas=collect_data_files('qt_material') + [('logo.png', '.')],
-    hiddenimports=['update_ui', 'updater', 'version', 'common', 'qt_material', 'dep_check', 'theme'],
+    datas=[('logo.png', '.')],
+    hiddenimports=['update_ui', 'updater', 'version', 'common', 'dep_check', 'theme'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=[
+        'tkinter', 'unittest', 'pydoc_data', 'test',
+        # qt_material was dropped, and it dragged jinja2 in with it
+        'qt_material', 'jinja2', 'markupsafe',
+        # PyQt5 modules the apps never import
+        'PyQt5.QtQml', 'PyQt5.QtQuick', 'PyQt5.QtQuickWidgets',
+        'PyQt5.QtWebEngine', 'PyQt5.QtWebEngineWidgets', 'PyQt5.QtWebEngineCore',
+        'PyQt5.QtWebSockets', 'PyQt5.QtWebChannel', 'PyQt5.QtBluetooth',
+        'PyQt5.QtNfc', 'PyQt5.QtPositioning', 'PyQt5.QtLocation',
+        'PyQt5.QtSerialPort', 'PyQt5.QtSql', 'PyQt5.QtTest',
+        'PyQt5.QtDesigner', 'PyQt5.QtHelp', 'PyQt5.QtMultimedia',
+        'PyQt5.QtMultimediaWidgets', 'PyQt5.QtOpenGL', 'PyQt5.QtXml',
+        'PyQt5.QtXmlPatterns', 'PyQt5.QtSensors', 'PyQt5.QtRemoteObjects',
+        'PyQt5.QtTextToSpeech', 'PyQt5.Qt3DCore', 'PyQt5.QtCharts',
+    ],
     noarchive=False,
     optimize=0,
 )

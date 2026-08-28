@@ -85,8 +85,10 @@ def test_playlist_count_is_remembered_across_items(mod):
     w.progress.connect(seen.append)
     base = {"status": "downloading", "total_bytes": 10,
             "downloaded_bytes": 5, "speed": 1_048_576}
-    w.progress_hook({**base, "playlist_count": 7})
-    w.progress_hook(base)  # no count this time
+    # Distinct filenames: consecutive playlist items. Updates are throttled to
+    # display rate, but a new file always bypasses the throttle.
+    w.progress_hook({**base, "filename": "a.mp4", "playlist_count": 7})
+    w.progress_hook({**base, "filename": "b.mp4"})  # no count this time
     assert seen[0]["playlist_count"] == 7
     assert seen[1]["playlist_count"] == 7
 
@@ -112,3 +114,45 @@ def test_postprocessor_silent_after_cancel(mod):
     w.postprocess.connect(msgs.append)
     w.postprocessor_hook({"status": "started", "info_dict": {"title": "X"}})
     assert msgs == []
+
+
+# ── update coalescing ────────────────────────────────────────────────────────
+# yt-dlp calls the hook per chunk; repainting at that rate wastes CPU that would
+# otherwise be moving bytes.
+
+@pytest.mark.parametrize("mod", MODS, ids=IDS)
+def test_rapid_identical_updates_are_coalesced(mod):
+    w = _worker(mod)
+    seen = []
+    w.progress.connect(seen.append)
+    payload = {"status": "downloading", "total_bytes": 1000,
+               "downloaded_bytes": 100, "speed": 1_048_576, "filename": "a.mp4"}
+    for _ in range(200):
+        w.progress_hook(payload)
+    assert len(seen) == 1, f"200 chunk callbacks produced {len(seen)} repaints"
+
+
+@pytest.mark.parametrize("mod", MODS, ids=IDS)
+def test_completion_is_never_throttled_away(mod):
+    """Dropping the last update would leave the bar stuck below 100%."""
+    w = _worker(mod)
+    seen = []
+    w.progress.connect(seen.append)
+    base = {"status": "downloading", "total_bytes": 1000, "speed": 1_048_576,
+            "filename": "a.mp4"}
+    w.progress_hook({**base, "downloaded_bytes": 10})
+    w.progress_hook({**base, "downloaded_bytes": 1000})   # immediately after
+    assert seen[-1]["percent"] == 100
+
+
+@pytest.mark.parametrize("mod", MODS, ids=IDS)
+def test_a_new_file_always_reports(mod):
+    """Each playlist item must show, however fast they arrive."""
+    w = _worker(mod)
+    seen = []
+    w.progress.connect(seen.append)
+    base = {"status": "downloading", "total_bytes": 1000,
+            "downloaded_bytes": 100, "speed": 1_048_576}
+    for name in ("a.mp4", "b.mp4", "c.mp4"):
+        w.progress_hook({**base, "filename": name})
+    assert [s["filename"] for s in seen] == ["a.mp4", "b.mp4", "c.mp4"]

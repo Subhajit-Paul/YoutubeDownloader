@@ -4,12 +4,14 @@ import os
 import sys
 import shutil
 import threading
+import time
 from pathlib import Path
 
-try:
-    import yt_dlp
-except ImportError:
-    yt_dlp = None
+from common import lazy_import
+
+# Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
+# download or metadata fetch begins.
+yt_dlp = lazy_import("yt_dlp")
 from textual import on, work
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -543,11 +545,19 @@ class YTDApp(App):
     ) -> None:
         cancel = self._cancel_event
 
+        # Coalesced for the same reason as the GUI: call_from_thread per chunk
+        # is more expensive than a Qt signal, and the terminal cannot show it.
+        last_emit = [0.0]
+
         def progress_hook(d: dict) -> None:
             if cancel.is_set():
                 raise yt_dlp.utils.DownloadCancelled()
             if d["status"] != "downloading":
                 return
+            now = time.monotonic()
+            if now - last_emit[0] < 0.08:
+                return
+            last_emit[0] = now
             try:
                 total_b = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
                 downloaded = d.get("downloaded_bytes", 0)

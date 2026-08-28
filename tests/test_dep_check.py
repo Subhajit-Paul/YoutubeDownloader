@@ -1,7 +1,11 @@
 """dep_check.py — startup dependency detection and per-platform install hints."""
+import pathlib
+
 import pytest
 
 import dep_check
+
+ROOT = pathlib.Path(__file__).resolve().parent.parent
 
 
 @pytest.mark.parametrize("platform,expected", [
@@ -44,14 +48,13 @@ def test_missing_ffmpeg_is_required(monkeypatch):
     assert missing[0]["required"] is True
 
 
-def test_missing_qt_material_is_optional(monkeypatch):
-    """The app must still start without the theme package."""
+def test_qt_material_is_no_longer_a_dependency(monkeypatch):
+    """theme.py covers styling; qt-material pulled jinja2 in for nothing."""
     monkeypatch.setattr(dep_check.importlib.util, "find_spec",
                         _fake_find_spec({"yt_dlp"}))
     monkeypatch.setattr(dep_check, "check_ffmpeg_available", lambda: True)
-    missing = dep_check.check_deps()
-    assert [d["name"] for d in missing] == ["qt-material"]
-    assert missing[0]["required"] is False
+    assert dep_check.check_deps() == []
+    assert "qt_material" not in (ROOT / "requirements.txt").read_text()
 
 
 def test_tui_context_skips_qt_material(monkeypatch):
@@ -66,5 +69,5 @@ def test_all_missing_reports_every_dep(monkeypatch):
     monkeypatch.setattr(dep_check.importlib.util, "find_spec", _fake_find_spec(set()))
     monkeypatch.setattr(dep_check, "check_ffmpeg_available", lambda: False)
     missing = dep_check.check_deps()
-    assert {d["name"] for d in missing} == {"yt-dlp", "ffmpeg", "qt-material"}
+    assert {d["name"] for d in missing} == {"yt-dlp", "ffmpeg"}
     assert all(d.keys() >= {"name", "reason", "cmd", "required"} for d in missing)

@@ -1,5 +1,4 @@
 PyQt5==5.15.11
 PyQt5-sip==12.17.0
-qt-material==2.17
 yt-dlp==2026.8.19
 textual==8.2.8

@@ -18,8 +18,12 @@ def _install_cmd(binary: str) -> str:
     return f'sudo apt install {binary}'
 
 
-def check_deps(check_qt_material: bool = True) -> list:
-    """Return a list of {name, reason, cmd, required} dicts for missing deps."""
+def check_deps(check_qt_material: bool = False) -> list:
+    """Return a list of {name, reason, cmd, required} dicts for missing deps.
+
+    check_qt_material is retained for call compatibility; qt-material was
+    dropped once theme.py covered styling, and it pulled in jinja2.
+    """
     missing = []
 
     if importlib.util.find_spec('yt_dlp') is None:
@@ -36,14 +40,6 @@ def check_deps(check_qt_material: bool = True) -> list:
             'reason': 'Required for video merging and audio extraction.',
             'cmd': _install_cmd('ffmpeg'),
             'required': True,
-        })
-
-    if check_qt_material and importlib.util.find_spec('qt_material') is None:
-        missing.append({
-            'name': 'qt-material',
-            'reason': 'Provides the dark Material theme. App runs with plain Qt styling without it.',
-            'cmd': 'pip install qt-material',
-            'required': False,
         })
 
     return missing

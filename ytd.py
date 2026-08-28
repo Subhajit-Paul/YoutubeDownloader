@@ -2,11 +2,13 @@ import sys
 import os
 import shutil
 import threading
+import time
 import urllib.request
-try:
-    import yt_dlp
-except ImportError:
-    yt_dlp = None
+from common import lazy_import
+
+# Deferred: yt-dlp is ~64 ms of a ~120 ms cold start and is not touched until a
+# download or metadata fetch begins.
+yt_dlp = lazy_import("yt_dlp")
 from pathlib import Path
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -20,10 +22,6 @@ from PyQt5.QtGui import (
     QFont, QIcon, QPainter, QPainterPath, QPixmap, QColor,
     QLinearGradient, QPen,
 )
-try:
-    from qt_material import apply_stylesheet
-except ImportError:
-    def apply_stylesheet(*a, **kw): pass
 
 from common import resource_path, get_ffmpeg_location, check_ffmpeg_available
 from version import __version__
@@ -209,9 +207,16 @@ class DownloadWorker(QObject):
         self._completed = 0
         self._total = 0
         self._lock = threading.Lock()
+        self._last_emit = 0.0
+        self._last_file = None
 
     def cancel(self):
         self._cancel.set()
+
+    # yt-dlp calls this per chunk — hundreds of times a second on a fast link.
+    # Emitting a Qt signal and repainting at that rate burns CPU that would
+    # otherwise be moving bytes, and no display updates faster than ~60 Hz.
+    _EMIT_INTERVAL = 0.08
 
     def progress_hook(self, d):
         if self._cancel.is_set():
@@ -225,6 +230,17 @@ class DownloadWorker(QObject):
             if not (total and speed):
                 return
             pct = (downloaded / total) * 100
+
+            # Throttle, but never swallow an update the user must see: the
+            # final chunk (or the bar sticks below 100) and the first chunk of
+            # a new file in a playlist.
+            filename = d.get('filename', '')
+            must_emit = pct >= 100 or filename != self._last_file
+            now = time.monotonic()
+            if not must_emit and now - self._last_emit < self._EMIT_INTERVAL:
+                return
+            self._last_emit = now
+            self._last_file = filename
             speed_mb = speed / 1_048_576
             eta = d.get('eta', 0)
             playlist_count = d.get('playlist_count') or 0
@@ -233,7 +249,7 @@ class DownloadWorker(QObject):
                     self._total = playlist_count
             self.progress.emit({
                 'percent': pct,
-                'filename': d.get('filename', ''),
+                'filename': filename,
                 'speed': speed_mb,
                 'eta': eta,
                 'playlist_index': d.get('playlist_index'),
@@ -1091,7 +1107,6 @@ if __name__ == '__main__':
         if any(d['required'] for d in issues) or result != QDialog.Accepted:
             sys.exit(1)
 
-    apply_stylesheet(app, theme='dark_blue.xml', invert_secondary=True)
     window = YoutubeDownloaderApp()
     window.show()
     QTimer.singleShot(3000, lambda: start_update_check(window, 'youtube-downloader'))

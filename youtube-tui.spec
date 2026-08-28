@@ -30,7 +30,8 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=["PyQt5", "tkinter"],
+    excludes=["PyQt5", "tkinter", "unittest", "pydoc_data", "test",
+              "qt_material", "jinja2", "markupsafe"],
     noarchive=False,
     optimize=0,
 )
