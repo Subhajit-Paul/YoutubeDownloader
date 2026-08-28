@@ -5,6 +5,7 @@ the first download, a title cut at a fixed character count, a fetch that showed
 nothing while it ran and nothing when it failed, and a TUI error whose reason
 lived only in a log panel that is hidden by default.
 """
+import os
 import pathlib
 
 import pytest
@@ -298,6 +299,19 @@ async def test_tui_option_row_fits_an_eighty_column_terminal(tui, audio):
 
 # ── Save folder ───────────────────────────────────────────────────────────────
 
+def _unwritable_folder(tmp_path, monkeypatch):
+    """Return a real folder whose write check is denied on every platform."""
+    folder = str(tmp_path.resolve())
+    real_access = common.os.access
+
+    def access(path, mode):
+        if os.path.abspath(path) == folder:
+            return False
+        return real_access(path, mode)
+
+    monkeypatch.setattr(common.os, "access", access)
+    return folder
+
 def test_a_folder_that_does_not_exist_yet_is_fine(tmp_path):
     """yt-dlp creates it; only the nearest existing ancestor has to be writable."""
     assert common.save_path_problem(str(tmp_path / "new" / "nested")) is None
@@ -306,11 +320,15 @@ def test_a_folder_that_does_not_exist_yet_is_fine(tmp_path):
 @pytest.mark.parametrize("bad,expected", [
     ("", "Choose a folder"),
     ("   ", "Choose a folder"),
-    ("/proc/no-such-place", "can’t be written to"),
 ])
 def test_unusable_save_folders_are_named(bad, expected):
     problem = common.save_path_problem(bad)
     assert problem and expected in problem
+
+
+def test_an_unwritable_save_folder_is_named(tmp_path, monkeypatch):
+    problem = common.save_path_problem(_unwritable_folder(tmp_path, monkeypatch))
+    assert problem and "can’t be written to" in problem
 
 
 def test_a_file_is_not_a_folder(tmp_path):
@@ -320,11 +338,12 @@ def test_a_file_is_not_a_folder(tmp_path):
 
 
 @pytest.mark.parametrize("window", WINDOWS, ids=IDS, indirect=True)
-def test_download_stops_before_it_starts_on_an_unwritable_folder(window):
+def test_download_stops_before_it_starts_on_an_unwritable_folder(window, tmp_path,
+                                                                  monkeypatch):
     """It used to fetch metadata, start a thread, and fail on the write."""
     window._meta = dict(META, _url="https://x/y")
     window.url_input.setText("https://x/y")
-    window.save_input.setText("/proc/no-such-place")
+    window.save_input.setText(_unwritable_folder(tmp_path, monkeypatch))
 
     window._start_download()
 
@@ -334,8 +353,9 @@ def test_download_stops_before_it_starts_on_an_unwritable_folder(window):
 
 
 @pytest.mark.parametrize("window", WINDOWS, ids=IDS, indirect=True)
-def test_leaving_the_folder_field_reports_a_problem_immediately(window):
-    window.save_input.setText("/proc/no-such-place")
+def test_leaving_the_folder_field_reports_a_problem_immediately(window, tmp_path,
+                                                                 monkeypatch):
+    window.save_input.setText(_unwritable_folder(tmp_path, monkeypatch))
     window._check_save_path()
     assert "✗" in window.status_label.text()
     window.save_input.setText(str(pathlib.Path.home()))

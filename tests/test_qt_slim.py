@@ -27,6 +27,8 @@ def _entry(dest, src):
 
 # ── ICU ───────────────────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(sys.platform != "linux",
+                    reason="Qt bundles this ELF ICU table only on Linux")
 def test_icu_stub_replaces_the_data_table(tmp_path):
     real = tmp_path / "libicudata.so.56"
     real.write_bytes(b"\0" * 4096)
@@ -44,6 +46,8 @@ def test_icu_stub_replaces_the_data_table(tmp_path):
     assert any(b[0] == "libQt5Core.so.5" for b in out)
 
 
+@pytest.mark.skipif(sys.platform != "linux",
+                    reason="Qt bundles this ELF ICU table only on Linux")
 def test_icu_stub_exports_the_symbol_the_loader_needs(tmp_path):
     """libQt5Core's DT_NEEDED only resolves if icudt<ver>_dat is exported."""
     real = tmp_path / "libicudata.so.56"
