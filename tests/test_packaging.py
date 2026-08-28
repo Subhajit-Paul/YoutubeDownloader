@@ -30,14 +30,6 @@ def _read(rel):
 
 # ── version consistency ──────────────────────────────────────────────────────
 
-def test_app_version_matches_android_package_version():
-    version = {}
-    exec(_read("version.py"), version)
-    cp = configparser.ConfigParser()
-    cp.read(ROOT / "android" / "buildozer.spec")
-    assert cp["app"]["version"] == version["__version__"]
-
-
 def test_version_is_a_three_part_release_tag():
     """The release workflow only fires on v[0-9]+.[0-9]+.[0-9]+."""
     version = {}

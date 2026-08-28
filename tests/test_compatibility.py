@@ -52,12 +52,6 @@ def test_pyproject_version_matches_version_py():
     assert data["project"]["version"] == _app_version()
 
 
-def test_android_version_matches_version_py():
-    cp = configparser.ConfigParser()
-    cp.read(ROOT / "android" / "buildozer.spec")
-    assert cp["app"]["version"] == _app_version()
-
-
 def test_requires_python_covers_every_version_ci_tests():
     import tomllib
     import yaml

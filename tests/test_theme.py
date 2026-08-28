@@ -27,6 +27,11 @@ CONTRAST_PAIRS = [
     ("success on window", T.SUCCESS, T.BG, 4.5),
     ("warning on window", T.WARNING, T.BG, 4.5),
     ("error on window", T.ERROR, T.BG, 4.5),
+    # The empty panel carries failure reasons, so it is body text, not a hint.
+    ("empty-state body on window", T.MUTED, T.BG, 4.5),
+    # Shown while an update downloads; was BORDER_STRONG on ACCENT_DIM at 1.4:1.
+    ("disabled primary label", T.MUTED, T.ACCENT_DIM, 4.5),
+    ("dialog secondary text on card", T.MUTED, T.CARD, 4.5),
 ]
 
 
@@ -43,7 +48,11 @@ def test_contrast_ratio_is_correct():
     assert T.contrast_ratio("#FFFFFF", "#FFFFFF") == pytest.approx(1.0, abs=0.01)
 
 
-@pytest.mark.parametrize("app", ["ytd.py", "ytd_audio.py", "ytd_tui.py"])
+# Every module that paints something. dep_check and update_ui were left out of
+# the original migration and kept their own indigo and teal palettes — the
+# missing-dependency dialog and the update prompt were visibly other products.
+@pytest.mark.parametrize("app", ["ytd.py", "ytd_audio.py", "ytd_tui.py",
+                                 "dep_check.py", "update_ui.py"])
 def test_front_ends_take_colour_from_the_design_system(app):
     """No hard-coded hex outside theme.py: that is how the palettes diverged."""
     src = (ROOT / app).read_text(encoding="utf-8")
