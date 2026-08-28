@@ -57,6 +57,12 @@ a = Analysis(
 a.binaries = [b for b in a.binaries
               if not any(q in b[0] for q in ('Qt5Quick', 'Qt5Qml'))]
 
+# Qt's own UI translations — 5.8 MB of .qm files for the strings in Qt's stock
+# dialogs. They are only loaded by a QTranslator, which this app never installs.
+# Verified by deleting them from a built tree and launching it.
+a.datas = [d for d in a.datas
+           if 'Qt5/translations' not in d[0].replace('\\', '/')]
+
 pyz = PYZ(a.pure)
 
 if sys.platform == 'darwin':

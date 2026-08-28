@@ -149,3 +149,35 @@ def test_the_workflow_verifies_the_build_before_shipping_it():
         "the macOS job went back to Homebrew's general-purpose ffmpeg")
     # the check reads yt-dlp's codec table, so it must run after the install
     assert wf.index("pip install -r requirements-build.txt") < wf.index("check_ffmpeg.py")
+
+
+# ── bundle contents that nothing loads ───────────────────────────────────────
+
+@pytest.mark.parametrize("spec", ["youtube-downloader.spec",
+                                  "youtube-audio-downloader.spec"])
+def test_qt_translations_are_not_shipped(spec):
+    """5.8 MB of .qm files for Qt's stock dialogs, loaded only by a QTranslator
+    the app never installs."""
+    assert "Qt5/translations" in _read(spec), (
+        f"{spec} no longer filters Qt's translations out of the bundle")
+
+
+@pytest.mark.parametrize("spec", ["youtube-downloader.spec",
+                                  "youtube-audio-downloader.spec"])
+def test_qml_libraries_are_not_shipped(spec):
+    """Excluded as Python modules, but PyInstaller still collects the .so files."""
+    src = _read(spec)
+    assert "Qt5Quick" in src and "Qt5Qml" in src, (
+        f"{spec} no longer filters the QML engine out of the bundle")
+
+
+def test_the_tui_does_not_drag_in_a_repl():
+    """rich.pretty/live/jupyter optionally import IPython, and collect_all("rich")
+    follows it — 28 MB of jedi and its typeshed stubs, for a UI with no REPL.
+
+    It depends on whether the build machine happens to have IPython installed,
+    which is the kind of thing that silently differs between a laptop and CI.
+    """
+    src = _read("youtube-tui.spec")
+    for mod in ("IPython", "jedi", "PIL"):
+        assert f'"{mod}"' in src, f"youtube-tui.spec no longer excludes {mod}"

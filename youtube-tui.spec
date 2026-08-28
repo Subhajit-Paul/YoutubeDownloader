@@ -35,7 +35,12 @@ a = Analysis(
               "qt_material", "jinja2", "markupsafe",
               # rich depends on pygments, whose ImageFormatter imports PIL —
               # ~14 MB of imaging library for a terminal UI that never draws one.
-              "PIL", "Pillow"],
+              "PIL", "Pillow",
+              # rich.pretty/live/jupyter optionally import IPython, and collect_all
+              # follows it — 28 MB of jedi and its typeshed stubs for a terminal
+              # UI that has no REPL. Absent from CI's environment today, which is
+              # exactly why it needs saying out loud.
+              "IPython", "jedi", "parso", "prompt_toolkit", "matplotlib_inline",],
     noarchive=False,
     optimize=0,
 )
