@@ -1,10 +1,9 @@
 # YouTube Downloader
 
 [![Desktop Build](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-release.yml/badge.svg)](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-release.yml)
-[![Android Build](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-android.yml/badge.svg)](https://github.com/Subhajit-Paul/YoutubeDownloader/actions/workflows/build-android.yml)
 [![Latest Release](https://img.shields.io/github/v/release/Subhajit-Paul/YoutubeDownloader?label=latest)](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS%20%7C%20Android-lightgrey)
+![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20%7C%20macOS-lightgrey)
 
 Three ways to download from YouTube — a GUI video app, a GUI audio app, and a terminal binary you put on your PATH.
 
@@ -13,7 +12,6 @@ Three ways to download from YouTube — a GUI video app, a GUI audio app, and a 
 | **YouTube Downloader** (GUI) | Casual video downloads | MP4 — Best / 1080p / 720p / 480p |
 | **YouTube Audio Downloader** (GUI) | Extracting audio | MP3, M4A, OPUS, FLAC, WAV |
 | **youtube-tui** (terminal) | Scripting, SSH, power users | MP4 + all audio formats |
-| **Android APK** | Mobile | MP4 + MP3, M4A, OPUS, FLAC |
 
 ---
 
@@ -62,10 +60,6 @@ Download the DMG files from [Releases](https://github.com/Subhajit-Paul/YoutubeD
 - `youtube-audio-downloader-macos-arm64.dmg`
 
 > **Intel Mac?** The ARM64 binary runs transparently via Rosetta 2 — no separate Intel build is needed.
-
-### Android
-
-Download `youtubedownloader-*-debug.apk` from [Releases](https://github.com/Subhajit-Paul/YoutubeDownloader/releases/latest). Enable *Install from unknown sources* on your device before installing.
 
 ---
 
@@ -119,9 +113,8 @@ CI runs on every tag push via GitHub Actions across five platform targets:
 | Linux x86_64 | `ubuntu-latest` | `.deb` × 2 | `tar.gz` binary |
 | Windows x86_64 | `windows-latest` | NSIS `.exe` × 2 | raw `.exe` |
 | macOS arm64 | `macos-14` | `.dmg` × 2 | `tar.gz` binary |
-| Android | `ubuntu-22.04` | — | `.apk` |
 
-All five publish to the same GitHub Release for each version tag.
+All three publish to the same GitHub Release for each version tag.
 
 ### Build locally
 
@@ -157,13 +150,16 @@ python ytd_audio.py    # audio GUI
 python ytd_tui.py      # TUI
 ```
 
-**Running on Android** — edit `android/main.py`, then build the APK:
+**Android** — the Kivy app in `android/` is no longer built or published; no
+APK ships with a release. The source is kept and still builds by hand:
 
 ```bash
 pip install buildozer==1.5.0 cython==3.0.11
 cd android
 buildozer android debug
 ```
+
+See [docs/ANDROID.md](docs/ANDROID.md) for the permission audit.
 
 ---
 

@@ -1,5 +1,9 @@
 # Android build
 
+> The APK is no longer built by CI or attached to releases. Everything below
+> applies to a hand-built APK — see the Android note in the README.
+
+
 The APK is audited on every build by `tools/check_apk.py`, which **gates the
 workflow** (`--strict`). Current state: **6/6 passing**.
 
