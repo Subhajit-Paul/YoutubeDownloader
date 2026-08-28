@@ -32,7 +32,10 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=["PyQt5", "tkinter", "unittest", "pydoc_data", "test",
-              "qt_material", "jinja2", "markupsafe"],
+              "qt_material", "jinja2", "markupsafe",
+              # rich depends on pygments, whose ImageFormatter imports PIL —
+              # ~14 MB of imaging library for a terminal UI that never draws one.
+              "PIL", "Pillow"],
     noarchive=False,
     optimize=0,
 )

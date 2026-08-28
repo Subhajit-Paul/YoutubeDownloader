@@ -57,7 +57,6 @@ try:
         QDialog, QVBoxLayout, QHBoxLayout, QLabel,
         QPushButton, QApplication, QFrame,
     )
-    from PyQt5.QtCore import Qt
 
     _BG     = '#0b0b14'
     _CARD   = '#17172e'

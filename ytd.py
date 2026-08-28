@@ -1,33 +1,28 @@
 import sys
 
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QLabel, QProgressBar, QComboBox,
-    QFileDialog, QFrame, QGraphicsDropShadowEffect, QCheckBox,
+    QFrame, QGraphicsDropShadowEffect, QCheckBox,
 )
 from PyQt5.QtCore import Qt, QThread, QTimer, QPropertyAnimation, QEasingCurve
-from PyQt5.QtGui import QFont, QIcon, QPixmap, QColor
+from PyQt5.QtGui import QFont, QColor
 
 from pathlib import Path
 
-from common import resource_path
 from version import __version__
 from ytd_core import (
-    BASE_SS, BaseDownloadWorker, BaseWindow, MetaWorker, ThumbWidget,
-    ThumbnailFetcher,
-    fmt_dur as _fmt_dur, reusable_info as _reusable_info,
+    BASE_SS, BaseDownloadWorker, BaseWindow, ThumbWidget,
+    reusable_info as _reusable_info,
     _BROWSERS, _ARIA2C_FOUND,
     _ADV_FRAGMENTS, _ADV_BUFSIZE, _ADV_CHUNK, _ADV_TIMEOUT,
     _ADV_FRAG_DEFAULT, _ADV_BUFSIZE_DEFAULT, _ADV_CHUNK_DEFAULT,
     _ADV_TIMEOUT_DEFAULT,
 )
 
-import theme as _T
 from theme import (
-    ACCENT as _ACCENT, BG as _BG, SURFACE as _SURFACE, CARD as _CARD,
-    BORDER as _BORDER, TEXT as _TEXT, MUTED as _MUTED,
-    SUCCESS as _SUCCESS, ERROR as _ERROR, WARNING as _WARN,
-    IDENTITY as _IDENTITY,
+    ACCENT as _ACCENT, TEXT as _TEXT, MUTED as _MUTED,
+    SUCCESS as _SUCCESS, IDENTITY as _IDENTITY,
 )
 
 # ── What makes this the video app ─────────────────────────────────────────────

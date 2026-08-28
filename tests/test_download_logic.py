@@ -15,21 +15,15 @@ import ytd_tui
 
 # ── duration formatting (duplicated in both GUI apps) ────────────────────────
 
-@pytest.mark.parametrize("mod", [ytd, ytd_audio], ids=["video", "audio"])
 @pytest.mark.parametrize("secs,expected", [
     (0, ""), (None, ""),
     (5, "0:05"), (59, "0:59"), (60, "1:00"), (61, "1:01"),
     (599, "9:59"), (600, "10:00"),
     (3600, "1:00:00"), (3661, "1:01:01"), (86399, "23:59:59"),
 ])
-def test_fmt_dur(mod, secs, expected):
-    assert mod._fmt_dur(secs) == expected
-
-
-def test_fmt_dur_is_identical_across_apps():
-    """Both GUI apps carry their own copy — they must not drift apart."""
-    for s in (0, 7, 61, 3600, 3661, 86399):
-        assert ytd._fmt_dur(s) == ytd_audio._fmt_dur(s)
+def test_fmt_dur(secs, expected):
+    """One function now: both desktop apps format a duration through ytd_core."""
+    assert ytd_core.fmt_dur(secs) == expected
 
 
 # ── quality map (duplicated in the video app and the TUI) ────────────────────

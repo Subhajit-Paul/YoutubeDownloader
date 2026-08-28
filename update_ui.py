@@ -5,8 +5,7 @@ import tempfile
 import threading
 import webbrowser
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal, Qt
-from PyQt5.QtGui import QFont
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
 from PyQt5.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QProgressBar, QPushButton, QVBoxLayout,
 )

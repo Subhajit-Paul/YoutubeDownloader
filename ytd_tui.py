@@ -1,7 +1,6 @@
 """YouTube Downloader — Terminal UI powered by Textual."""
 
 import os
-import sys
 import shutil
 import tempfile
 import threading
@@ -22,7 +21,7 @@ from textual.widgets import (
     ProgressBar, RadioButton, RadioSet, RichLog, Select,
 )
 
-from common import get_ffmpeg_location, check_ffmpeg_available
+from common import get_ffmpeg_location
 from version import __version__
 import theme as T
 

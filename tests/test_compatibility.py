@@ -261,8 +261,7 @@ def test_both_apps_resolve_the_same_engine(mod_name):
     mod = importlib.import_module(mod_name)
     assert issubclass(mod.DownloadWorker, ytd_core.BaseDownloadWorker)
     assert issubclass(mod._ThumbWidget, ytd_core.ThumbWidget)
-    assert mod.MetaWorker is ytd_core.MetaWorker
-    assert mod._fmt_dur is ytd_core.fmt_dur
+    assert issubclass(mod.DownloadWorker, ytd_core.BaseDownloadWorker)
 
     window = getattr(mod, "YoutubeDownloaderApp", None) or mod.YoutubeAudioDownloaderApp
     assert window._SS.startswith(ytd_core.BASE_SS), (

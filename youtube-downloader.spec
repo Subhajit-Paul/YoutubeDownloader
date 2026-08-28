@@ -52,6 +52,12 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# PyQt5.QtQml/QtQuick are excluded as Python modules above, but PyInstaller
+# still collects their shared libraries — 10 MB of QML engine that a QtWidgets
+# app never loads. Verified by removing them from a built tree and launching it.
+a.binaries = [b for b in a.binaries
+              if not any(q in b[0] for q in ('Qt5Quick', 'Qt5Qml'))]
+
 pyz = PYZ(a.pure)
 
 if sys.platform == 'darwin':
@@ -62,7 +68,7 @@ if sys.platform == 'darwin':
         exclude_binaries=True,
         name='youtube-downloader',
         debug=False,
-        strip=False,
+        strip=True,
         upx=False,
         console=False,
         argv_emulation=True,
@@ -72,7 +78,7 @@ if sys.platform == 'darwin':
         exe,
         a.binaries,
         a.datas,
-        strip=False,
+        strip=True,
         upx=False,
         name='youtube-downloader',
     )
@@ -96,7 +102,7 @@ else:
         name='youtube-downloader',
         debug=False,
         bootloader_ignore_signals=False,
-        strip=False,
+        strip=True,
         upx=False,
         upx_exclude=[],
         console=False,
@@ -112,7 +118,7 @@ else:
         exe,
         a.binaries,
         a.datas,
-        strip=False,
+        strip=True,
         upx=False,
         name='youtube-downloader',
     )

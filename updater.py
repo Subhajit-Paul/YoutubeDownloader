@@ -1,6 +1,5 @@
 """Network-only update logic — no Qt imports here."""
 import json
-import os
 import platform
 import shutil
 import subprocess
