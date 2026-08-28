@@ -93,11 +93,17 @@ def test_m4a_bitstream_filter_is_built():
 
 
 def test_the_build_script_is_executable_and_pinned():
-    import os
-    import stat
+    """The executable bit is checked as git records it, not as the filesystem
+    reports it — Windows checkouts have no such bit, and CI runs this there."""
+    import subprocess
 
     assert BUILD.exists(), "the ffmpeg build script is missing"
-    assert os.stat(BUILD).st_mode & stat.S_IXUSR, "build script is not executable"
+    ls = subprocess.run(["git", "ls-files", "-s", "packaging/ffmpeg/build-ffmpeg.sh"],
+                        cwd=ROOT, capture_output=True, text=True)
+    if ls.returncode == 0 and ls.stdout.strip():
+        assert ls.stdout.split()[0] == "100755", (
+            "build-ffmpeg.sh is not committed as executable, so the runners "
+            "that build ffmpeg cannot run it")
     src = BUILD.read_text(encoding="utf-8")
     for var in ("FFMPEG_VERSION", "LAME_VERSION", "OPUS_VERSION"):
         assert re.search(rf'{var}:-[\d.]+', src), f"{var} is not pinned"
