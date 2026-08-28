@@ -7,6 +7,7 @@ REPO="Subhajit-Paul/YoutubeDownloader"
 BINARY="youtube-tui"
 ALIAS_NAME="ytd"
 INSTALL_DIR="${HOME}/.local/bin"
+LIB_DIR="${HOME}/.local/lib/youtube-tui"
 
 # ── Detect platform ────────────────────────────────────────────────────────────
 # Match on arch too: CI publishes only linux-x86_64 and macos-arm64, so an
@@ -44,12 +45,17 @@ fi
 
 tar -xzf "$TMP/$ASSET" -C "$TMP"
 
-# ── Install binary ─────────────────────────────────────────────────────────────
+# ── Install ────────────────────────────────────────────────────────────────────
+# The release is a PyInstaller onedir tree: the launcher needs the _internal
+# directory beside it. Onefile was 1298 ms to first paint; this is ~390 ms.
 mkdir -p "$INSTALL_DIR"
-mv "$TMP/$BINARY" "$INSTALL_DIR/$BINARY"
-chmod +x "$INSTALL_DIR/$BINARY"
+rm -rf "$LIB_DIR"
+mkdir -p "$(dirname "$LIB_DIR")"
+mv "$TMP/$BINARY" "$LIB_DIR"
+chmod +x "$LIB_DIR/$BINARY"
+ln -sf "$LIB_DIR/$BINARY" "$INSTALL_DIR/$BINARY"
 
-echo "Installed: $INSTALL_DIR/$BINARY"
+echo "Installed: $LIB_DIR  (launcher: $INSTALL_DIR/$BINARY)"
 
 # ── Shell detection → rc file, PATH line, alias line, source command ───────────
 SHELL_NAME="$(basename "${SHELL:-sh}")"

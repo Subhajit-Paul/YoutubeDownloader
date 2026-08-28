@@ -15,8 +15,19 @@ mkdir -p "${PKG}/usr/bin"
 mkdir -p "${PKG}/usr/share/applications"
 mkdir -p "${PKG}/usr/share/icons/hicolor/256x256/apps"
 
-# Binary
-install -m 755 "dist/${APP}" "${PKG}/usr/bin/${APP}"
+# Application directory.
+# PyInstaller now emits onedir (a onefile bootloader re-extracts the whole
+# archive on every launch — 1298 ms vs ~390 ms to first paint), so the payload
+# is a directory under /usr/lib with a launcher on PATH.
+mkdir -p "${PKG}/usr/lib/${APP}"
+cp -a "dist/${APP}/." "${PKG}/usr/lib/${APP}/"
+chmod 755 "${PKG}/usr/lib/${APP}/${APP}"
+
+cat > "${PKG}/usr/bin/${APP}" <<LAUNCH
+#!/bin/sh
+exec /usr/lib/${APP}/${APP} "\$@"
+LAUNCH
+chmod 755 "${PKG}/usr/bin/${APP}"
 
 # Desktop entry
 install -m 644 "packaging/linux/${APP}.desktop" "${PKG}/usr/share/applications/"

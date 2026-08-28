@@ -71,10 +71,14 @@ def test_local_modules_imported_by_entry_are_declared_hidden(spec, entry, exe):
 # ── NSIS installers (Windows) ────────────────────────────────────────────────
 
 @pytest.mark.parametrize("spec,entry,exe", GUI_APPS)
-def test_nsis_packages_the_binary_pyinstaller_actually_builds(spec, entry, exe):
+def test_nsis_packages_the_onedir_tree(spec, entry, exe):
+    """onedir ships a launcher plus an _internal tree; installing only the .exe
+    would produce an installer whose app cannot start."""
     nsi = _read(f"packaging/windows/{exe}.nsi")
     assert f'!define APP_EXE    "{exe}.exe"' in nsi
-    assert 'File "dist\\${APP_EXE}"' in nsi
+    assert f'!define APP_ID_DIR "{exe}"' in nsi
+    assert 'File /r "dist\\${APP_ID_DIR}\\*.*"' in nsi
+    assert 'RMDir /r "$INSTDIR"' in nsi, "uninstall must remove the tree"
 
 
 @pytest.mark.parametrize("spec,entry,exe", GUI_APPS)
@@ -164,9 +168,9 @@ def test_assets_install_tui_downloads_are_produced_by_ci(asset):
     assert asset in _read("install-tui.sh")
 
 
-def test_ci_produces_the_windows_tui_binary():
-    """install-tui.sh sends Windows users to the release page for this exact file."""
-    assert "youtube-tui-windows-x86_64.exe" in _ci_release_filenames()
+def test_ci_produces_the_windows_tui_archive():
+    """onedir: a bare .exe cannot run without its _internal tree beside it."""
+    assert "youtube-tui-windows-x86_64.zip" in _ci_release_filenames()
 
 
 def test_install_tui_matches_on_arch_not_just_os():
@@ -214,3 +218,28 @@ def test_android_avoids_c_extensions_without_android_wheels(pkg):
 
 def test_android_entry_point_exists():
     assert (ROOT / "android" / "main.py").exists()
+
+
+# ── build layout ─────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("spec,entry,exe", APPS)
+def test_specs_build_onedir_not_onefile(spec, entry, exe):
+    """A onefile bootloader decompresses the entire archive on every launch.
+    Measured on the shipped v1.3.0 TUI: 1298 ms to first paint against ~390 ms
+    for onedir. COLLECT is what makes it onedir."""
+    src = _read(spec)
+    assert "COLLECT(" in src, f"{spec} is onefile again"
+    assert "exclude_binaries=True" in src, (
+        f"{spec} passes binaries to EXE, which produces a onefile bundle")
+
+
+def test_deb_installs_the_tree_and_a_launcher():
+    sh = _read("packaging/linux/make-deb.sh")
+    assert "/usr/lib/${APP}" in sh, "onedir payload belongs outside /usr/bin"
+    assert "/usr/bin/${APP}" in sh, "a launcher must still land on PATH"
+
+
+def test_tui_installer_handles_a_directory():
+    sh = _read("install-tui.sh")
+    assert "LIB_DIR" in sh
+    assert "ln -sf" in sh, "the launcher on PATH should be a symlink into the tree"

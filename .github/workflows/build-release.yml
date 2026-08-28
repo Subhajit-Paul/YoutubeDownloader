@@ -153,7 +153,9 @@ jobs:
           New-Item -ItemType Directory -Force -Path release | Out-Null
           makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
           makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
-          Copy-Item "dist\youtube-tui.exe" "release\youtube-tui-windows-x86_64.exe"
+          # onedir: the launcher needs its _internal tree beside it, so the
+          # Windows TUI ships as a zip rather than a bare .exe.
+          Compress-Archive -Path "dist\youtube-tui\*" -DestinationPath "release\youtube-tui-windows-x86_64.zip"
 
       # ── macOS: DMG ─────────────────────────────────────────────────────────
       - name: Create DMG packages (macOS)

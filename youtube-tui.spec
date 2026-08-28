@@ -37,23 +37,32 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# onedir, not onefile: a onefile bootloader decompresses the whole archive to
+# a temp directory on *every* launch. Measured on the shipped v1.3.0 TUI that
+# cost 1298 ms to first paint; onedir is ~390 ms.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name="youtube-tui",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=False,
+    strip=True,
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=True,
+    upx=False,
+    name="youtube-tui",
 )

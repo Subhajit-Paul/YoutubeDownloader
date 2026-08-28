@@ -5,6 +5,7 @@ Unicode True
 !endif
 
 !define APP_NAME   "YouTube Downloader"
+!define APP_ID_DIR "youtube-downloader"
 !define APP_EXE    "youtube-downloader.exe"
 !define APP_ID     "YouTubeDownloader"
 !define PUBLISHER  "Subhajit Paul"
@@ -23,7 +24,8 @@ Page instfiles
 
 Section "Install"
   SetOutPath "$INSTDIR"
-  File "dist\${APP_EXE}"
+  ; onedir payload: the launcher plus its _internal tree.
+  File /r "dist\${APP_ID_DIR}\*.*"
 
   ; Shortcuts
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
@@ -46,7 +48,8 @@ SectionEnd
 Section "Uninstall"
   Delete "$INSTDIR\${APP_EXE}"
   Delete "$INSTDIR\uninstall.exe"
-  RMDir  "$INSTDIR"
+  RMDir /r "$INSTDIR\_internal"
+  RMDir /r "$INSTDIR"
 
   Delete "$DESKTOP\${APP_NAME}.lnk"
   Delete "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk"
