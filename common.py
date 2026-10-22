@@ -4,6 +4,14 @@ import shutil
 import sys
 
 
+def signal_startup_ready():
+    """Let the bundle smoke test know the app reached its UI event loop."""
+    ready_file = os.environ.get('YTD_SMOKE_READY_FILE')
+    if ready_file:
+        with open(ready_file, 'w', encoding='utf-8') as stream:
+            stream.write('ready')
+
+
 def resource_path(relative_path):
     try:
         base_path = sys._MEIPASS

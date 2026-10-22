@@ -3,6 +3,7 @@ import os
 import shutil
 import sys
 
+# GNU strip can damage Windows runtime DLLs; keep PE binaries intact.
 # Build-time only; nothing under packaging/ is bundled.
 sys.path.insert(0, os.path.join(SPECPATH, 'packaging'))
 import qt_slim
@@ -90,7 +91,7 @@ if sys.platform == 'darwin':
         exclude_binaries=True,
         name='youtube-downloader',
         debug=False,
-        strip=True,
+        strip=sys.platform != 'win32',
         upx=False,
         console=False,
         argv_emulation=True,
@@ -100,7 +101,7 @@ if sys.platform == 'darwin':
         exe,
         a.binaries,
         a.datas,
-        strip=True,
+        strip=sys.platform != 'win32',
         upx=False,
         name='youtube-downloader',
     )
@@ -124,7 +125,7 @@ else:
         name='youtube-downloader',
         debug=False,
         bootloader_ignore_signals=False,
-        strip=True,
+        strip=sys.platform != 'win32',
         upx=False,
         upx_exclude=[],
         console=False,
@@ -140,7 +141,7 @@ else:
         exe,
         a.binaries,
         a.datas,
-        strip=True,
+        strip=sys.platform != 'win32',
         upx=False,
         name='youtube-downloader',
     )

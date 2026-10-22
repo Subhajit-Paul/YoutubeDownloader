@@ -21,7 +21,7 @@ from textual.widgets import (
     ProgressBar, RadioButton, RadioSet, RichLog, Select,
 )
 
-from common import get_ffmpeg_location
+from common import get_ffmpeg_location, signal_startup_ready
 from version import __version__
 import theme as T
 
@@ -414,6 +414,8 @@ class YTDApp(App):
             if has_required:
                 self.query_one("#download-btn", Button).disabled = True
 
+        if not any(d['required'] for d in issues):
+            self.call_after_refresh(signal_startup_ready)
         self.set_timer(3.0, self._check_for_update)
 
     # ── Event handlers ───────────────────────────────────────────────────────
@@ -903,4 +905,4 @@ class YTDApp(App):
 
 if __name__ == "__main__":
     app = YTDApp()
-    app.run()
+    app.run(headless=bool(os.environ.get('YTD_SMOKE_READY_FILE')))

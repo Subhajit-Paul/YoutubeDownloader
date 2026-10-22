@@ -5,9 +5,11 @@ still agree. Every CI failure this repo hit was a disagreement of exactly this k
 (NSIS looking for dist/*.exe from the wrong directory, an installer asset that was
 never built, a dep with no Android wheel).
 """
+import ast
 import configparser
 import pathlib
 import re
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -236,6 +238,29 @@ def test_specs_build_onedir_not_onefile(spec, entry, exe):
     assert "COLLECT(" in src, f"{spec} is onefile again"
     assert "exclude_binaries=True" in src, (
         f"{spec} passes binaries to EXE, which produces a onefile bundle")
+
+
+@pytest.mark.parametrize("spec,entry,exe", APPS)
+@pytest.mark.parametrize("platform", ["win32", "linux", "darwin"])
+def test_specs_preserve_windows_runtime_dlls(spec, entry, exe, platform):
+    """Evaluate every EXE/COLLECT strip setting, including inactive branches."""
+    calls = [node for node in ast.walk(ast.parse(_read(spec)))
+             if isinstance(node, ast.Call)
+             and isinstance(node.func, ast.Name)
+             and node.func.id in {"EXE", "COLLECT"}]
+    assert calls
+    for call in calls:
+        setting = next(kw.value for kw in call.keywords if kw.arg == "strip")
+        enabled = eval(compile(ast.Expression(setting), spec, "eval"),
+                       {"sys": SimpleNamespace(platform=platform)})
+        assert enabled is (platform != "win32"), (
+            f"{spec}:{call.lineno} must not strip Windows PE files")
+
+
+def test_ci_smoke_launches_every_app():
+    run = _step("Smoke-launch")["run"]
+    for _, _, exe in APPS:
+        assert f"smoke_launch.py dist/{exe}" in run
 
 
 def test_deb_installs_the_tree_and_a_launcher():

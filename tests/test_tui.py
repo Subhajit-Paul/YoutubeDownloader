@@ -55,6 +55,23 @@ async def test_app_mounts_with_url_focused(app):
         assert pilot.app.focused.id == "url-input"
 
 
+async def test_smoke_readiness_after_mount(app, monkeypatch, tmp_path):
+    ready = tmp_path / 'ready'
+    monkeypatch.setenv('YTD_SMOKE_READY_FILE', str(ready))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        assert ready.read_text(encoding='utf-8') == 'ready'
+
+
+async def test_missing_required_dep_never_signals_ready(
+        app_missing_ffmpeg, monkeypatch, tmp_path):
+    ready = tmp_path / 'ready'
+    monkeypatch.setenv('YTD_SMOKE_READY_FILE', str(ready))
+    async with app_missing_ffmpeg.run_test() as pilot:
+        await pilot.pause()
+        assert not ready.exists()
+
+
 async def test_cancel_disabled_until_a_download_starts(app):
     async with app.run_test():
         assert app.query_one("#cancel-btn").disabled is True

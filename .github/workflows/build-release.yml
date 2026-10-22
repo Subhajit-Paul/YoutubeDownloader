@@ -157,15 +157,14 @@ jobs:
       - name: Build TUI downloader
         run: pyinstaller youtube-tui.spec --noconfirm
 
-      # CI built three apps on three platforms and never started one of them.
-      # A bundle whose shared libraries cannot be resolved dies at exec time,
-      # before any Python runs — which is how a bad ICU stub presents, and the
-      # stub is only exercised on Linux outside this job.
+      # Require readiness from the UI event loop: a Windows loader error
+      # dialog can stay alive and fool a process-liveness-only check.
       - name: Smoke-launch the built apps
         shell: bash
         run: |
           python tools/smoke_launch.py dist/youtube-downloader
           python tools/smoke_launch.py dist/youtube-audio-downloader
+          python tools/smoke_launch.py dist/youtube-tui
 
       # The ICU stub and the plugin trim both degrade to a no-op rather than to
       # a broken build, so a missing compiler would ship a 111 MB bundle in
@@ -213,10 +212,29 @@ jobs:
           $env:PATH += ";C:\Program Files (x86)\NSIS"
           New-Item -ItemType Directory -Force -Path release | Out-Null
           makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-downloader.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'Video installer compilation failed' }
           makensis /NOCD /DVERSION=${{ steps.version.outputs.version }} packaging\windows\youtube-audio-downloader.nsi
+          if ($LASTEXITCODE -ne 0) { throw 'Audio installer compilation failed' }
           # onedir: the launcher needs its _internal tree beside it, so the
           # Windows TUI ships as a zip rather than a bare .exe.
           Compress-Archive -Path "dist\youtube-tui\*" -DestinationPath "release\youtube-tui-windows-x86_64.zip"
+
+      - name: Smoke-test Windows packages
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          foreach ($app in @('youtube-downloader', 'youtube-audio-downloader')) {
+            $installer = (Resolve-Path "release\$app-windows-x86_64-setup.exe").Path
+            $destination = Join-Path $env:RUNNER_TEMP "installed\$app"
+            $process = Start-Process -FilePath $installer -ArgumentList "/S /D=$destination" -WindowStyle Hidden -PassThru -Wait
+            if ($process.ExitCode -ne 0) { throw "$app installation failed: $($process.ExitCode)" }
+            python tools/smoke_launch.py "$destination"
+            if ($LASTEXITCODE -ne 0) { throw "$app installed app failed to start" }
+          }
+          $tui = Join-Path $env:RUNNER_TEMP 'installed\youtube-tui'
+          Expand-Archive -LiteralPath release\youtube-tui-windows-x86_64.zip -DestinationPath $tui
+          python tools/smoke_launch.py "$tui"
+          if ($LASTEXITCODE -ne 0) { throw 'Extracted TUI failed to start' }
 
       # ── macOS: DMG ─────────────────────────────────────────────────────────
       - name: Create DMG packages (macOS)

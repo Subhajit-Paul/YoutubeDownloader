@@ -4,6 +4,7 @@ import shutil
 import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules, collect_all
 
+# GNU strip can damage Windows runtime DLLs; keep PE binaries intact.
 ffmpeg_binaries = []
 if sys.platform == "win32":
     if os.path.exists("ffmpeg.exe"):
@@ -57,7 +58,7 @@ exe = EXE(
     name="youtube-tui",
     debug=False,
     bootloader_ignore_signals=False,
-    strip=True,
+    strip=sys.platform != 'win32',
     upx=False,
     console=True,
     disable_windowed_traceback=False,
@@ -71,7 +72,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
-    strip=True,
+    strip=sys.platform != 'win32',
     upx=False,
     name="youtube-tui",
 )

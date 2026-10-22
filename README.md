@@ -111,7 +111,7 @@ CI runs on every tag push via GitHub Actions across five platform targets:
 | Platform | Runner | GUI artifacts | TUI artifact |
 |----------|--------|---------------|--------------|
 | Linux x86_64 | `ubuntu-latest` | `.deb` × 2 | `tar.gz` binary |
-| Windows x86_64 | `windows-latest` | NSIS `.exe` × 2 | raw `.exe` |
+| Windows x86_64 | `windows-latest` | NSIS `.exe` × 2 | `.zip` (extract the whole folder) |
 | macOS arm64 | `macos-14` | `.dmg` × 2 | `tar.gz` binary |
 
 All three publish to the same GitHub Release for each version tag.

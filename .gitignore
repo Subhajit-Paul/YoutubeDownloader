@@ -2,6 +2,7 @@ android/bin/
 android/.buildozer/
 build/
 dist/
+/release/
 *.egg-info/
 # the binary staged at the repo root for a build — anchored, so it does not
 # also swallow packaging/ffmpeg/

@@ -428,6 +428,8 @@ if __name__ == '__main__':
 
     window = YoutubeAudioDownloaderApp()
     window.show()
+    from common import signal_startup_ready
+    QTimer.singleShot(0, signal_startup_ready)
     # Imported inside the callback: update_ui pulls updater and
     # urllib.request (~21 ms), and nothing here runs until T+3 s.
     def _check_updates():
